@@ -14,14 +14,14 @@ overflow: hidden;
 width: 300px; border-right:1px solid #c4c4c4;
 }
 
-.categories_content {
+.categories-content {
 background: #f8f8f8 none repeat scroll 0 0;
 float: left;
 overflow: hidden;
 width: 300px; border-right:1px solid #c4c4c4;
 }
 
-.container{max-width:1170px; margin:auto;}
+.container{max-width:100vw !important; width: 100vw; margin:auto;}
 img{ max-width:100%;}
 .inbox_people {
 background: #f8f8f8 none repeat scroll 0 0;
