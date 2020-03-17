@@ -18,13 +18,15 @@ drop table threads  cascade;
 create table if not exists threads (
     id SERIAL PRIMARY KEY,
     title text,
-    category INTEGER
+    category INTEGER,
+    author TEXT
 );
 drop table posts  cascade;
 create table if not exists posts (
     id SERIAL PRIMARY KEY,
     body text,
     thread INTEGER,
+    author TEXT,
     foreign key (thread) references threads (id)
 );
 """)
