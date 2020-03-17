@@ -1,0 +1,26 @@
+{% extends "layout.html" %}
+{% block title %}Index{% endblock %}
+{% block head %}
+  {{ super() }}
+  <style type="text/css">
+    .important { color: #336699; }
+  </style>
+{% endblock %}
+{% block content %}
+  <a href="/categories/{{ category[0] }}"><h1>{{ category[1] }}</h1></a>
+
+    <a href="/thread/{{thread[0]}}"><h2>{{ thread[1] }}</h2></a>
+
+    {% for post in posts %}
+      <li>{{ post[4] }}</li>
+    {% endfor %}
+
+    <form method="post" action="/post/{{ thread[0] }}">
+      Name <input type="text" name="title"/>
+      <input type="hidden" name="category" value="{{ category[0] }}"/>
+      <textarea name="body"></textarea>
+      <button type="Submit">Submit</button>
+    </form>
+
+
+{% endblock %}

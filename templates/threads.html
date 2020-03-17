@@ -1,0 +1,21 @@
+{% extends "layout.html" %}
+{% block title %}Index{% endblock %}
+{% block head %}
+  {{ super() }}
+  <style type="text/css">
+    .important { color: #336699; }
+  </style>
+{% endblock %}
+{% block content %}
+  <h1>{{ category[1] }}</h1>
+  {% for thread in threads %}
+    <a href="/thread/{{thread[0]}}"><h2>{{ thread[1] }}</h2></a>
+  {% endfor %}
+  <h1>New thread</h1>
+  <form method="post" action="/thread">
+    <div>Name <input type="text" name="title"/></div>
+    <input type="hidden" name="category" value="{{ category[0] }}"/>
+    <div>Body<textarea name="body"></textarea></div>
+    <button type="Submit">Submit</button>
+  </form>
+{% endblock %}
