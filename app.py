@@ -8,6 +8,7 @@ import re
 import uuid
 import hashlib
 import collections
+from datetime import datetime
 
 try:
     conn = psycopg2.connect("dbname='forum' user='forum' host='localhost' password='forum'")
@@ -110,8 +111,8 @@ def add_forum():
     signed_in, username, user_email, email_token, login_token = check_signed_in()
     cur = conn.cursor()
     cur.execute("""
-    insert into categories (title) values (%s) returning id;
-    """, (request.form["category"],))
+    insert into categories (title, published_date) values (%s, %s) returning id;
+    """, (request.form["category"],datetime.now()))
     id = cur.fetchone()[0]
     conn.commit()
     return make_response(redirect("/categories/" + str(id), 302))
@@ -143,14 +144,14 @@ def get_thread(category, thread):
     signed_in, username, user_email, email_token, login_token = check_signed_in()
     cur = conn.cursor()
     cur.execute("""
-    select posts.body, posts.author, threads.category from threads inner join posts on posts.thread = threads.id where threads.id = %s;
+    select posts.body, posts.author, threads.category, posts.published_date from threads inner join posts on posts.thread = threads.id where threads.id = %s;
     """, (thread,))
     posts = cur.fetchmany(50)
 
     signed_in, username, user_email, email_token, login_token = check_signed_in()
     cur = conn.cursor()
     cur.execute("""
-    select threads.id, threads.author, threads.title, threads.category from threads where category = %s;
+    select threads.id, threads.author, threads.title, threads.category, threads.published_date from threads where category = %s;
     """, (category))
     threads = cur.fetchmany(50)
 
@@ -168,6 +169,9 @@ def get_thread(category, thread):
     select * from threads where id = %s;
     """, (thread,))
     thread = cur.fetchmany(1)[0]
+
+
+
     return render_template("thread.html", active_thread=thread, active_category=category, signed_in=signed_in, categories=categories, user_email=user_email, thread=thread, category=category, posts=posts, threads=threads)
 
 
@@ -181,13 +185,15 @@ def add_thread():
     category_id = cur.fetchone()[0]
 
     cur.execute("""
-    insert into threads (title, category, author) values (%s, %s, %s) returning id;
-    """, (request.form["title"], request.form["category"], user_email))
+    insert into threads (title, category, author, published_date) values (%s, %s, %s, %s) returning id;
+    """, (request.form["title"], request.form["category"], user_email, datetime.now()))
     id = cur.fetchone()[0]
     conn.commit()
+
+    dt = datetime.now()
     cur.execute("""
-    insert into posts (thread, body, author) values (%s, %s, %s) returning id;
-    """, (id, request.form["body"], user_email))
+    insert into posts (thread, body, author, published_date) values (%s, %s, %s, %s) returning id;
+    """, (id, request.form["body"], user_email, dt))
     id = cur.fetchone()[0]
     conn.commit()
     target = "/"

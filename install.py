@@ -12,14 +12,16 @@ cur.execute("""
 drop table categories cascade;
 create table if not exists categories (
     id SERIAL PRIMARY KEY,
-    title TEXT
+    title TEXT,
+    published_date TIMESTAMP
 );
 drop table threads  cascade;
 create table if not exists threads (
     id SERIAL PRIMARY KEY,
     title text,
     category INTEGER,
-    author TEXT
+    author TEXT,
+    published_date TIMESTAMP
 );
 drop table posts  cascade;
 create table if not exists posts (
@@ -27,6 +29,7 @@ create table if not exists posts (
     body text,
     thread INTEGER,
     author TEXT,
+    published_date TIMESTAMP,
     foreign key (thread) references threads (id)
 );
 """)

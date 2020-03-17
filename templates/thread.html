@@ -63,11 +63,11 @@
 
                 {% for thread in threads %}
                 <div class="chat_list {% if thread[0] == active_thread[0] %} active_chat {% endif %}">
-                
+
                   <div class="chat_people">
                     <div class="chat_img"> <img src="https://ptetutorials.com/images/user-profile.png" alt="sunil"> </div>
                     <div class="chat_ib">
-                      <h5>{{ thread[1]  }} <span class="chat_date">Dec 25</span></h5>
+                      <h5>{{ thread[1]  }} <span class="chat_date">{{ thread[4].strftime("%d %b | %H:%M") }}</span></h5>
                       <a href="/categories/{{thread[3]}}/thread/{{ thread[0] }}">{{ thread[2] }}</a>
                     </div>
                   </div>
@@ -97,7 +97,7 @@
                   <div class="received_msg">
                     <div class="received_withd_msg">
                       <p>{{ post[0] }}</p>
-                      <span class="time_date"> 11:01 AM    |    June 9</span></div>
+                      <span class="time_date">{{ post[3].strftime("%d %b | %H:%M") }}</span></div>
                   </div>
                   {% endfor %}
                   <div id="end"></div>
