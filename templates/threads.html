@@ -8,9 +8,107 @@
 {% endblock %}
 {% block content %}
   <h1>{{ category[1] }}</h1>
-  {% for thread in threads %}
-    <a href="/thread/{{thread[0]}}"><h2>{{ thread[1] }}</h2></a>
-  {% endfor %}
+
+  <div class="container">
+  <h3 class=" text-center">Messaging</h3>
+  <div class="messaging">
+        <div class="inbox_msg">
+          <div class="categories">
+              <div class="headind_srch">
+                  <div class="recent_heading">
+                    <h4>Categories</h4>
+                  </div>
+              </div>
+              <div class="categories-content">
+                      {% for category in categories %}
+                      <div class="chat_list {% if category[0] == active_category[0] %} active_chat {% endif %}">
+                        <div class="chat_people">
+                          <div class="chat_img"> <img src="https://ptetutorials.com/images/user-profile.png" alt="sunil"> </div>
+                          <div class="chat_ib">
+                            <h5>{{ category[1]  }} <span class="chat_date">Dec 25</span></h5>
+                            <a href="/categories/{{ category[0] }}">{{ category[1] }}</a>
+                          </div>
+                        </div>
+                      </div>
+                      {% endfor %}
+                      <div class="type_msg">
+                        <div class="input_msg_write">
+                          <form method="post" action="/">
+                          <input type="text" name="category" class="write_msg" placeholder="Type a category" />
+                          <button class="msg_send_btn" type="submit"><i class="fa fa-paper-plane-o" aria-hidden="true"></i></button>
+                          </form>
+                        </div>
+                      </div>
+              </div>
+          </div>
+
+          <div class="inbox_people">
+            <div class="headind_srch">
+              <div class="recent_heading">
+                <h4>Threads</h4>
+              </div>
+              <div class="srch_bar">
+                <div class="stylish-input-group">
+                  <input type="text" class="search-bar"  placeholder="Search" >
+                  <span class="input-group-addon">
+                  <button type="button"> <i class="fa fa-search" aria-hidden="true"></i> </button>
+                  </span> </div>
+              </div>
+            </div>
+            <div class="inbox_chat">
+
+
+
+
+
+
+
+              {% for thread in threads %}
+              <div class="chat_list">
+                <div class="chat_people">
+                  <div class="chat_img"> <img src="https://ptetutorials.com/images/user-profile.png" alt="sunil"> </div>
+                  <div class="chat_ib">
+                    <h5>{{ thread[1]  }} <span class="chat_date">Dec 25</span></h5>
+                    <a href="/categories/{{category[0]}}/thread/{{ thread[0] }}">{{ thread[1] }}</a>
+                  </div>
+                </div>
+              </div>
+              {% endfor %}
+              <div id="end"></div>
+              <div class="type_msg">
+                <div class="input_msg_write">
+                  <form method="post" action="/thread">
+                  <input type="hidden" name="category" value="{{ category[0] }}"/>
+                  <input type="text" name="title" class="write_msg" placeholder="Type a title" />
+                  <input type="text" name="body" class="write_msg" placeholder="Type a message" />
+                  <button class="msg_send_btn" type="submit"><i class="fa fa-paper-plane-o" aria-hidden="true"></i></button>
+                  </form>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="mesgs">
+            <div class="msg_history">
+              <div class="incoming_msg">
+
+
+
+
+
+              </div>
+
+
+
+            </div>
+
+
+          </div>
+        </div>
+
+
+        <p class="text-center top_spac"> Design by <a target="_blank" href="#">Sunil Rajput</a></p>
+
+
   <h1>New thread</h1>
   <form method="post" action="/thread">
     <div>Name <input type="text" name="title"/></div>

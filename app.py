@@ -102,7 +102,7 @@ def forums():
         response.set_cookie("email", email_token)
     if login_token:
         response.set_cookie("login", login_token)
-        return response
+    return response
 
 
 @app.route("/", methods=["POST"])
@@ -114,7 +114,7 @@ def add_forum():
     """, (request.form["category"],))
     id = cur.fetchone()[0]
     conn.commit()
-    return make_response(redirect("/", 302))
+    return make_response(redirect("/categories/" + str(id), 302))
 
 
 
@@ -125,21 +125,39 @@ def threads(category):
     cur.execute("""
     select * from categories where id = %s;
     """, (category,))
-    category = cur.fetchmany(1)[0]
+    category_data = cur.fetchmany(1)[0]
+
+    cur.execute("""
+    select * from categories;
+    """, (category,))
+    categories = cur.fetchmany(20)
+
     cur.execute("""
     select * from threads where category = %s;
     """, (category[0],))
     threads = cur.fetchmany(50)
-    return render_template("threads.html", signed_in=signed_in, user_email=user_email, category=category, threads=threads)
+    return render_template("threads.html", active_category=category_data, signed_in=signed_in, categories=categories, user_email=user_email, category=category_data, threads=threads)
 
-@app.route("/thread/<thread>", methods=["GET"])
-def get_thread(thread):
+@app.route("/categories/<category>/thread/<thread>", methods=["GET"])
+def get_thread(category, thread):
     signed_in, username, user_email, email_token, login_token = check_signed_in()
     cur = conn.cursor()
     cur.execute("""
     select posts.body, posts.author, threads.category from threads inner join posts on posts.thread = threads.id where threads.id = %s;
     """, (thread,))
     posts = cur.fetchmany(50)
+
+    signed_in, username, user_email, email_token, login_token = check_signed_in()
+    cur = conn.cursor()
+    cur.execute("""
+    select threads.id, threads.author, threads.title, threads.category from threads where category = %s;
+    """, (category))
+    threads = cur.fetchmany(50)
+
+    cur.execute("""
+    select * from categories;
+    """, (category,))
+    categories = cur.fetchmany(50)
 
     cur.execute("""
     select * from categories where id = %s;
@@ -150,7 +168,7 @@ def get_thread(thread):
     select * from threads where id = %s;
     """, (thread,))
     thread = cur.fetchmany(1)[0]
-    return render_template("thread.html", signed_in=signed_in, user_email=user_email, thread=thread, category=category, posts=posts)
+    return render_template("thread.html", active_thread=thread, active_category=category, signed_in=signed_in, categories=categories, user_email=user_email, thread=thread, category=category, posts=posts, threads=threads)
 
 
 @app.route("/thread", methods=["POST"])
@@ -175,7 +193,7 @@ def add_thread():
     target = "/"
     if request.form["category"]:
         target = "/categories/" + str(category_id)
-    return make_response(redirect(target, 302))
+    return redirect(target, 302)
 
 @app.route("/post/<thread>", methods=["POST"])
 def add_post(thread):
@@ -184,9 +202,10 @@ def add_post(thread):
     cur.execute("""
     insert into posts (thread, body, author) values (%s, %s, %s) returning id;
     """, (thread, request.form["body"], user_email))
+    category = request.form["category"]
     id = cur.fetchone()[0]
     conn.commit()
-    return make_response(redirect("/thread/" + thread, 302))
+    return make_response(redirect("/categories/" + category + "/thread/" + thread, 302))
 
 
 if __name__ == "__main__":

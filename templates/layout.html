@@ -5,23 +5,33 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <title>{% block title %}{% endblock %} - My Webpage</title>
     {% endblock %}
+    <link href="//maxcdn.bootstrapcdn.com/bootstrap/4.1.1/css/bootstrap.min.css" rel="stylesheet" id="bootstrap-css">
+    <script src="//maxcdn.bootstrapcdn.com/bootstrap/4.1.1/js/bootstrap.min.js"></script>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
+    <!------ Include the above in your HEAD tag ---------->
+
+
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.css" type="text/css" rel="stylesheet"
+
   </head>
   <body>
+      <div class="signed-in">
+      {% if not signed_in %}
+         Email
+         <form action="/signin" method="post">
+         <input name="email" type="text" placeholder="me@gmail.com"></input>
+         <button>Sign in</button>
+         </form>
+         {% else %}
+      Signed in as {{user_email}}
+         {% endif %}
+     </div>
     <div id="content">
-        {% if not signed_in %}
-           Email
-           <form action="/signin" method="post">
-           <input name="email" type="text" placeholder="me@gmail.com"></input>
-           <button>Sign in</button>
-           </form>
-           {% else %}
-       	Signed in as {{user_email}}
-           {% endif %}
 
         {% block content %}{% endblock %}</div>
     <div id="footer">
       {% block footer %}
-      &copy; Copyright 2010 by <a href="http://domain.invalid/">you</a>.
+
       {% endblock %}
     </div>
   </body>
