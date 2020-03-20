@@ -371,8 +371,8 @@ def flat():
                 yield "div.users div.books h2 =" + book.name
                 yield "div.users div.books h3 = Reviews"
                 for review in book.reviews():
-                    yield "div.users div.books div.review div span =" + review.title
-                    yield "div.users div.books div.review div span =" + str(review.score)
+                    yield "div.users div.books div.review div li =" + review.title
+                    yield "div.users div.books div.review div li =" + str(review.score)
     return Response(unflatten(generate()), mimetype='text/html')
 
 if __name__ == "__main__":
