@@ -1,5 +1,5 @@
 from flask import Flask
-from flask import render_template, redirect, request, make_response
+from flask import Response, render_template, redirect, request, make_response
 import psycopg2
 import os, smtplib, ssl, time
 import yaml
@@ -7,6 +7,7 @@ import random
 import re
 import uuid
 import hashlib
+from pprint import pprint
 import collections
 from datetime import datetime
 
@@ -147,6 +148,7 @@ def get_thread(category, thread):
     select posts.body, posts.author, threads.category, posts.published_date from threads inner join posts on posts.thread = threads.id where threads.id = %s;
     """, (thread,))
     posts = cur.fetchmany(50)
+    pprint(cur.description)
 
     signed_in, username, user_email, email_token, login_token = check_signed_in()
     cur = conn.cursor()
@@ -213,6 +215,167 @@ def add_post(thread):
     conn.commit()
     return make_response(redirect("/categories/" + category + "/thread/" + thread, 302))
 
+class Element():
+    def __init__(self, name, className, children=None):
+        self.name = name
+        self.className = className
+        if children != None:
+            self.children = children
+
+    def root_serialize(self):
+        for child in self.children:
+            if isinstance(child, str):
+                yield child
+            else:
+                yield from child.serialize()
+
+    def serialize(self):
+        yield "<" + self.name + " class=\"" + self.className + "\">"
+        for child in self.children:
+            if isinstance(child, str):
+                yield child
+            else:
+                yield from child.serialize()
+        yield "</" + self.name + ">"
+
+
+
+def unflatten(flat_html):
+    childrenLookups = {}
+    rootChildren = []
+    root = Element("div", "", rootChildren)
+
+    done = {}
+
+
+    for line in flat_html:
+        textNodes = line.split("=")
+        components = textNodes[0].split(" ")
+        if components[len(components) - 1] == "":
+            components.pop()
+        text = None
+        if len(textNodes) > 0:
+            text = textNodes[1]
+
+
+        for place, component in enumerate(components):
+            subpath = ""
+            for subindex, subcomponent in enumerate(components):
+                subpath += components[subindex].replace("-", "") + " "
+                if subpath not in childrenLookups:
+                    print("Creating " + subpath)
+                    childrenLookups[subpath] = []
+                    done[subpath] = False
+
+
+        for place, component in enumerate(components):
+            # print(childrenLookups)
+            path = ""
+            nextPath = ""
+            previousPath = ""
+            for subindex in range(0, place + 1):
+                path += components[subindex].replace("-", "") + " "
+            for subindex in range(0, place + 2):
+                if subindex < len(components):
+                    nextPath += components[subindex].replace("-", "") + " "
+            for subindex in range(0, place):
+                previousPath += components[subindex].replace("-", "") + " "
+            freshNode = component[0] == "-"
+            subpath = ""
+
+            if freshNode:
+                # print("Clearing")
+                yield from root.root_serialize()
+
+                rootChildren.clear()
+                subpath = ""
+                for subindex, subcomponent in enumerate(components):
+                    subpath += components[subindex].replace("-", "") + " "
+                    if subpath not in childrenLookups:
+                        print(subpath)
+                        childrenLookups[subpath] = []
+                        done[subpath] = False
+
+
+            attrs = component.split(".")
+            element = attrs[0]
+            className = ""
+
+
+
+            if len(attrs) == 2:
+                className = attrs[1]
+            end = False
+            if path == nextPath:
+                end = True
+
+            if end == True:
+
+                textNode = Element(element.replace("-", ""), className, [text])
+
+                childrenLookups[previousPath].append(textNode)
+                done[path] = True
+
+                if place == 0:
+                    print("Appending to root")
+                    root.children.append(textNode)
+
+            elif place == 0 and freshNode:
+                # childrenLookups[nextPath] = []
+                print("Creating root node")
+                node = Element(element.replace("-", ""), className, childrenLookups[path])
+                root.children.append(node)
+                # childrenLookups[previousPath].append(node)
+                done[path] = True
+            elif done[path]:
+                pass
+            else:
+                print(previousPath)
+                childrenLookups[previousPath].append(Element(element.replace("-", ""), className, childrenLookups[path]))
+                done[path] = True
+
+    yield from root.root_serialize()
+
+
+
+
+
+class User():
+    def __init__(self, name):
+        self.name = name
+
+    def books(self):
+        return [Book("A long journey")]
+
+class Book():
+    def __init__(self, name):
+        self.name = name
+        pass
+
+
+    def reviews(self):
+        return [Review("Review1", 5), Review("Review2", 10)]
+
+class Review():
+    def __init__(self, name, score):
+        self.title = name
+        self.score = score
+
+@app.route("/flat")
+def flat():
+    def generate():
+
+        users = [User("sam")]
+
+        for user in users:
+            yield "-div.users h1 =" + user.name
+            for book in user.books():
+                yield "div.users div.books h2 =" + book.name
+                yield "div.users div.books h3 = Reviews"
+                for review in book.reviews():
+                    yield "div.users div.books div.review span =" + review.title
+                    yield "div.users div.books div.review span =" + str(review.score)
+    return Response(unflatten(generate()), mimetype='text/html')
 
 if __name__ == "__main__":
     app.run()
