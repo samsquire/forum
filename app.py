@@ -284,17 +284,14 @@ def unflatten(flat_html):
             subpath = ""
 
             if freshNode:
-                # print("Clearing")
+                print("Clearing")
                 yield from root.root_serialize()
 
                 rootChildren.clear()
                 subpath = ""
-                for subindex, subcomponent in enumerate(components):
-                    subpath += components[subindex].replace("-", "") + " "
-                    if subpath not in childrenLookups:
-                        print(subpath)
-                        childrenLookups[subpath] = []
-                        done[subpath] = False
+                for k, v in childrenLookups.items():
+                    childrenLookups[k] = []
+                    done[k] = False
 
 
             attrs = component.split(".")
@@ -328,6 +325,7 @@ def unflatten(flat_html):
                 # childrenLookups[previousPath].append(node)
                 done[path] = True
             elif done[path]:
+                print("Passing")
                 pass
             else:
                 print(previousPath)
@@ -365,7 +363,7 @@ class Review():
 def flat():
     def generate():
 
-        users = [User("sam")]
+        users = [User("sam"), User("root")]
 
         for user in users:
             yield "-div.users h1 =" + user.name
@@ -373,8 +371,8 @@ def flat():
                 yield "div.users div.books h2 =" + book.name
                 yield "div.users div.books h3 = Reviews"
                 for review in book.reviews():
-                    yield "div.users div.books div.review span =" + review.title
-                    yield "div.users div.books div.review span =" + str(review.score)
+                    yield "div.users div.books div.review div span =" + review.title
+                    yield "div.users div.books div.review div span =" + str(review.score)
     return Response(unflatten(generate()), mimetype='text/html')
 
 if __name__ == "__main__":
