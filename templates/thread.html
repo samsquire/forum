@@ -23,7 +23,7 @@
                           <div class="chat_people">
                             <div class="chat_img"> <img src="https://ptetutorials.com/images/user-profile.png" alt="sunil"> </div>
                             <div class="chat_ib">
-                              <h5>{{ category[1]  }} <span class="chat_date">Dec 25</span></h5>
+                              <h5>{{ category[1]  }} <span class="chat_date">{{ category[2].strftime("%d %b | %H:%M") }}</span></h5>
                               <a href="/categories/{{ category[0] }}">{{ category[1] }}</a>
                             </div>
                           </div>
@@ -54,12 +54,6 @@
                 </div>
               </div>
               <div class="inbox_chat">
-
-
-
-
-
-
 
                 {% for thread in threads %}
                 <div class="chat_list {% if thread[0] == active_thread[0] %} active_chat {% endif %}">

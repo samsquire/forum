@@ -113,7 +113,7 @@ def add_forum():
     cur = conn.cursor()
     cur.execute("""
     insert into categories (title, published_date) values (%s, %s) returning id;
-    """, (request.form["category"],datetime.now()))
+    """, (request.form["category"], datetime.now()))
     id = cur.fetchone()[0]
     conn.commit()
     return make_response(redirect("/categories/" + str(id), 302))
