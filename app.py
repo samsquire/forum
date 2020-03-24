@@ -246,7 +246,8 @@ def unflatten(flat_html):
     root = Element("div", "", rootChildren)
 
     done = {}
-
+    parents = {}
+    dones = {}
 
     for line in flat_html:
         textNodes = line.split("=")
@@ -260,31 +261,45 @@ def unflatten(flat_html):
 
         for place, component in enumerate(components):
             subpath = ""
+            last_subpath = ""
             for subindex, subcomponent in enumerate(components):
-                subpath += components[subindex].replace("-", "") + " "
+                subpath += components[subindex].replace("-", "").replace("+", "") + " "
+                parents[subpath] = last_subpath
+                last_subpath = subpath
                 if subpath not in childrenLookups:
-                    print("Creating " + subpath)
                     childrenLookups[subpath] = []
                     done[subpath] = False
 
 
+        sharedNode = False
+
         for place, component in enumerate(components):
-            # print(childrenLookups)
+            print(component)
             path = ""
             nextPath = ""
             previousPath = ""
             for subindex in range(0, place + 1):
-                path += components[subindex].replace("-", "") + " "
+                path += components[subindex].replace("-", "").replace("+", "") + " "
             for subindex in range(0, place + 2):
                 if subindex < len(components):
-                    nextPath += components[subindex].replace("-", "") + " "
+                    nextPath += components[subindex].replace("-", "").replace("+", "") + " "
             for subindex in range(0, place):
-                previousPath += components[subindex].replace("-", "") + " "
-            freshNode = component[0] == "-"
+                previousPath += components[subindex].replace("-", "").replace("+", "") + " "
+
             subpath = ""
 
+            freshNode = component[0] == "-"
+            sharedNode = component[0] == "+"
+            if sharedNode:
+
+                for k, v in childrenLookups.items():
+                    if k.endswith(component.replace("+", "") + " "):
+                        print("FOUND RE-CREATABLE " + k)
+                        # childrenLookups[k] = []
+                        # done[k] = False
             if freshNode:
-                print("Clearing")
+
+
                 yield from root.root_serialize()
 
                 rootChildren.clear()
@@ -312,25 +327,33 @@ def unflatten(flat_html):
 
                 childrenLookups[previousPath].append(textNode)
                 done[path] = True
-
+                dones[component] = True
                 if place == 0:
-                    print("Appending to root")
+
                     root.children.append(textNode)
 
-            elif place == 0 and freshNode:
+            elif component not in dones and place == 0 and freshNode:
                 # childrenLookups[nextPath] = []
-                print("Creating root node")
+
                 node = Element(element.replace("-", ""), className, childrenLookups[path])
                 root.children.append(node)
                 # childrenLookups[previousPath].append(node)
                 done[path] = True
+                dones[component] = True
+            elif sharedNode:
+                childrenLookups[path] = []
+                childrenLookups[previousPath].append(Element(element.replace("-", "").replace("+", ""), className, childrenLookups[path]))
+                done[path] = True
+                dones[component] = True
             elif done[path]:
-                print("Passing")
                 pass
+
             else:
                 print(previousPath)
-                childrenLookups[previousPath].append(Element(element.replace("-", ""), className, childrenLookups[path]))
+                childrenLookups[previousPath].append(Element(element.replace("-", "").replace("+", ""), className, childrenLookups[path]))
                 done[path] = True
+                dones[component] = True
+
 
     yield from root.root_serialize()
 
@@ -365,14 +388,15 @@ def flat():
 
         users = [User("sam"), User("root")]
 
+        yield "-div.users h1 =Books"
         for user in users:
-            yield "-div.users h1 =" + user.name
+            yield "div.users h1 =" + user.name
             for book in user.books():
                 yield "div.users div.books h2 =" + book.name
                 yield "div.users div.books h3 = Reviews"
                 for review in book.reviews():
-                    yield "div.users div.books div.review div li =" + review.title
-                    yield "div.users div.books div.review div li =" + str(review.score)
+                    yield "div.users div.books +div.review li =" + review.title
+                    yield "div.users div.books div.review li =" + str(review.score)
     return Response(unflatten(generate()), mimetype='text/html')
 
 if __name__ == "__main__":
