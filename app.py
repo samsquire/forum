@@ -392,9 +392,9 @@ def flat():
 
         yield "-div.users h1 =Books"
         for user in users:
-            yield "-div.users h1 =" + user.name
+            yield "div.users h1 =" + user.name
             for book in user.books():
-                yield "div.users div.books h2 =" + book.name
+                yield "div.users +div.books h2 =" + book.name
                 yield "div.users div.books h3 = Reviews"
                 for review in book.reviews():
                     yield "div.users div.books +div.review li =" + review.title
