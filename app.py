@@ -332,7 +332,7 @@ def unflatten(flat_html):
 
                     root.children.append(textNode)
 
-            elif component not in dones and place == 0 and freshNode:
+            elif place == 0 and freshNode:
                 # childrenLookups[nextPath] = []
 
                 node = Element(element.replace("-", ""), className, childrenLookups[path])
@@ -350,9 +350,11 @@ def unflatten(flat_html):
 
             else:
                 print(previousPath)
+
                 childrenLookups[previousPath].append(Element(element.replace("-", "").replace("+", ""), className, childrenLookups[path]))
                 done[path] = True
                 dones[component] = True
+
 
 
     yield from root.root_serialize()
@@ -390,7 +392,7 @@ def flat():
 
         yield "-div.users h1 =Books"
         for user in users:
-            yield "div.users h1 =" + user.name
+            yield "-div.users h1 =" + user.name
             for book in user.books():
                 yield "div.users div.books h2 =" + book.name
                 yield "div.users div.books h3 = Reviews"
