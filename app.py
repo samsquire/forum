@@ -263,7 +263,7 @@ def unflatten(flat_html):
             subpath = ""
             last_subpath = ""
             for subindex, subcomponent in enumerate(components):
-                subpath += components[subindex].replace("-", "").replace("+", "") + " "
+                subpath += components[subindex].replace("-", "").replace("+", "").replace("^", "") + " "
                 parents[subpath] = last_subpath
                 last_subpath = subpath
                 if subpath not in childrenLookups:
@@ -279,23 +279,24 @@ def unflatten(flat_html):
             nextPath = ""
             previousPath = ""
             for subindex in range(0, place + 1):
-                path += components[subindex].replace("-", "").replace("+", "") + " "
+                path += components[subindex].replace("-", "").replace("+", "").replace("^", "") + " "
             for subindex in range(0, place + 2):
                 if subindex < len(components):
-                    nextPath += components[subindex].replace("-", "").replace("+", "") + " "
+                    nextPath += components[subindex].replace("-", "").replace("+", "").replace("^", "") + " "
             for subindex in range(0, place):
-                previousPath += components[subindex].replace("-", "").replace("+", "") + " "
+                previousPath += components[subindex].replace("-", "").replace("+", "").replace("^", "") + " "
 
             subpath = ""
 
             freshNode = component[0] == "-"
             sharedNode = component[0] == "+"
-            if sharedNode:
+            parentNode = component[0] == "^"
+            if parentNode:
 
                 for k, v in childrenLookups.items():
-                    if k.endswith(component.replace("+", "") + " "):
+                    if len(k.split(" ")) >= 3:
                         print("FOUND RE-CREATABLE " + k)
-                        # childrenLookups[k] = []
+                        childrenLookups[k] = []
                         # done[k] = False
             if freshNode:
 
@@ -323,7 +324,7 @@ def unflatten(flat_html):
 
             if end == True:
 
-                textNode = Element(element.replace("-", ""), className, [text])
+                textNode = Element(element.replace("-", "").replace("^", ""), className, [text])
 
                 childrenLookups[previousPath].append(textNode)
                 done[path] = True
@@ -335,23 +336,31 @@ def unflatten(flat_html):
             elif place == 0 and freshNode:
                 # childrenLookups[nextPath] = []
 
-                node = Element(element.replace("-", ""), className, childrenLookups[path])
+                node = Element(element.replace("-", "").replace("^", ""), className, childrenLookups[path])
                 root.children.append(node)
                 # childrenLookups[previousPath].append(node)
                 done[path] = True
                 dones[component] = True
+            elif parentNode:
+                if done[path] == False:
+                    childrenLookups[path] = []
+                    root.children.append(Element(element.replace("-", "").replace("+", "").replace("^", ""), className, childrenLookups[path]))
+                    done[path] = True
+                    dones[component] = True
+                    childrenLookups[""] = childrenLookups[path]
             elif sharedNode:
-                childrenLookups[path] = []
-                childrenLookups[previousPath].append(Element(element.replace("-", "").replace("+", ""), className, childrenLookups[path]))
-                done[path] = True
-                dones[component] = True
+                    childrenLookups[path] = []
+                    childrenLookups[previousPath].append(Element(element.replace("-", "").replace("+", "").replace("^", ""), className, childrenLookups[path]))
+                    done[path] = True
+                    dones[component] = True
+
             elif done[path]:
                 pass
 
             else:
                 print(previousPath)
 
-                childrenLookups[previousPath].append(Element(element.replace("-", "").replace("+", ""), className, childrenLookups[path]))
+                childrenLookups[previousPath].append(Element(element.replace("-", "").replace("+", "").replace("^", ""), className, childrenLookups[path]))
                 done[path] = True
                 dones[component] = True
 
@@ -390,7 +399,7 @@ def flat():
 
         users = [User("sam"), User("root")]
 
-        yield "-div.users h1 =Books"
+        yield "^div.users h1 =Books"
         for user in users:
             yield "div.users h1 =" + user.name
             for book in user.books():
