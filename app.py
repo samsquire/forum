@@ -440,8 +440,8 @@ forms = {
             {"name": "nickname", "label": "Nickname"}
         ]
     }
-
 }
+
 def index_fields(form):
     for index, field in enumerate(form["fields"]):
         field["index"] = index
@@ -476,7 +476,8 @@ def render(form, id):
             value = ""
             if id != "new":
                 value = person[field["index"]]
-            yield "div form(action:/save,method:post) div input(type:text,name:{},id:{},value:{})".format(field["name"], field["name"], value)
+            yield "div form(action:/save,method:post) div input(type:text,name:{},id:{},value:{})"
+            .format(field["name"], field["name"], value)
         yield "div form(action:/save,method:post) button(type:submit) = Submit"
 
 
