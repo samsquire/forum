@@ -32,6 +32,13 @@ create table if not exists posts (
     published_date TIMESTAMP,
     foreign key (thread) references threads (id)
 );
+
+create table if not exists people (
+    id serial primary key,
+    firstname text,
+    lastname text,
+    nickname text
+);
 """)
 
 # close communication with the PostgreSQL database server

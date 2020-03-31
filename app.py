@@ -10,6 +10,7 @@ import hashlib
 from pprint import pprint
 import collections
 from datetime import datetime
+import operator
 
 try:
     conn = psycopg2.connect("dbname='forum' user='forum' host='localhost' password='forum'")
@@ -216,9 +217,10 @@ def add_post(thread):
     return make_response(redirect("/categories/" + category + "/thread/" + thread, 302))
 
 class Element():
-    def __init__(self, name, className, children=None):
+    def __init__(self, name, className, children=None, attrs={}):
         self.name = name
         self.className = className
+        self.attrs = attrs
         if children != None:
             self.children = children
 
@@ -229,8 +231,14 @@ class Element():
             else:
                 yield from child.serialize()
 
+    def renderAttrs(self):
+        html = ""
+        for k, v in self.attrs.items():
+            html += "{}=\"{}\" ".format(k, v)
+        return html
+
     def serialize(self):
-        yield "<" + self.name + " class=\"" + self.className + "\">"
+        yield "<" + self.name + " class=\"" + self.className + "\"" + self.renderAttrs() + ">"
         for child in self.children:
             if isinstance(child, str):
                 yield child
@@ -238,7 +246,17 @@ class Element():
                 yield from child.serialize()
         yield "</" + self.name + ">"
 
+def createAttrs(element):
+    fields = {}
+    sides = element.split("(")
+    if len(sides) == 2:
 
+        kvs = sides[1].split(")")[0].split(",")
+
+        for kv in kvs:
+            field, value = kv.split(":")
+            fields[field] = value
+    return sides[0].replace("-", "").replace("+", "").replace("^", ""), fields
 
 def unflatten(flat_html):
     childrenLookups = {}
@@ -250,12 +268,13 @@ def unflatten(flat_html):
     dones = {}
 
     for line in flat_html:
+        print("\"{}\",".format(line))
         textNodes = line.split("=")
         components = textNodes[0].split(" ")
         if components[len(components) - 1] == "":
             components.pop()
         text = None
-        if len(textNodes) > 0:
+        if len(textNodes) > 1:
             text = textNodes[1]
 
 
@@ -274,7 +293,7 @@ def unflatten(flat_html):
         sharedNode = False
 
         for place, component in enumerate(components):
-            print(component)
+
             path = ""
             nextPath = ""
             previousPath = ""
@@ -295,7 +314,7 @@ def unflatten(flat_html):
 
                 for k, v in childrenLookups.items():
                     if len(k.split(" ")) >= 3:
-                        print("FOUND RE-CREATABLE " + k)
+
                         childrenLookups[k] = []
                         # done[k] = False
             if freshNode:
@@ -323,20 +342,23 @@ def unflatten(flat_html):
                 end = True
 
             if end == True:
+                element, attrs = createAttrs(element)
+                if text:
+                    textNode = Element(element, className, [text], attrs)
+                else:
+                    textNode = Element(element, className, childrenLookups[path], attrs)
 
-                textNode = Element(element.replace("-", "").replace("^", ""), className, [text])
-
-                childrenLookups[previousPath].append(textNode)
+                if previousPath != "":
+                    childrenLookups[previousPath].append(textNode)
                 done[path] = True
                 dones[component] = True
                 if place == 0:
-
                     root.children.append(textNode)
 
             elif place == 0 and freshNode:
                 # childrenLookups[nextPath] = []
 
-                node = Element(element.replace("-", "").replace("^", ""), className, childrenLookups[path])
+                node = Element(element.replace("-", "").replace("^", "").replace("+", ""), className, childrenLookups[path], {})
                 root.children.append(node)
                 # childrenLookups[previousPath].append(node)
                 done[path] = True
@@ -344,23 +366,22 @@ def unflatten(flat_html):
             elif parentNode:
                 if done[path] == False:
                     childrenLookups[path] = []
-                    root.children.append(Element(element.replace("-", "").replace("+", "").replace("^", ""), className, childrenLookups[path]))
+                    root.children.append(Element(element.replace("-", "").replace("+", "").replace("^", ""), className, childrenLookups[path], {}))
                     done[path] = True
                     dones[component] = True
                     childrenLookups[""] = childrenLookups[path]
             elif sharedNode:
-                    childrenLookups[path] = []
-                    childrenLookups[previousPath].append(Element(element.replace("-", "").replace("+", "").replace("^", ""), className, childrenLookups[path]))
-                    done[path] = True
-                    dones[component] = True
+                childrenLookups[path] = []
+                childrenLookups[previousPath].append(Element(element.replace("-", "").replace("+", "").replace("^", ""), className, childrenLookups[path], {}))
+                done[path] = True
+
 
             elif done[path]:
                 pass
 
             else:
-                print(previousPath)
-
-                childrenLookups[previousPath].append(Element(element.replace("-", "").replace("+", "").replace("^", ""), className, childrenLookups[path]))
+                element, attrs = createAttrs(element)
+                childrenLookups[previousPath].append(Element(element, className, childrenLookups[path], attrs))
                 done[path] = True
                 dones[component] = True
 
@@ -409,6 +430,91 @@ def flat():
                     yield "div.users div.books +div.review li =" + review.title
                     yield "div.users div.books div.review li =" + str(review.score)
     return Response(unflatten(generate()), mimetype='text/html')
+
+
+forms = {
+    "people": {
+        "fields": [
+            {"name": "firstname", "label": "First Name"},
+            {"name": "lastname", "label": "Last Name"},
+            {"name": "nickname", "label": "Nickname"}
+        ]
+    }
+
+}
+def index_fields(form):
+    for index, field in enumerate(form["fields"]):
+        field["index"] = index
+
+
+for k, v in forms.items():
+    index_fields(v)
+
+
+def columns(form):
+    column_list = map(operator.itemgetter("name"), forms[form]["fields"])
+    return ",".join(column_list)
+
+@app.route("/forms/<form>/<id>", methods=["GET"])
+def render(form, id):
+    if form not in forms:
+        return "Error"
+
+    if id != "new":
+        cur = conn.cursor()
+        cur.execute("""
+        select {} from {} where id = %s;
+        """.format(columns(form), form), (id,))
+        person = cur.fetchone()
+
+    def generate():
+        yield "-div"
+        yield "div form(action:/save,method:post) input(type:hidden,name:thing,value:{})".format(form)
+        yield "div form(action:/save,method:post) input(type:hidden,name:id,value:{})".format(id)
+        for field in forms[form]["fields"]:
+            yield "div form(action:/save,method:post) +div label(for:{}) = {}".format(field["name"], field["label"])
+            value = ""
+            if id != "new":
+                value = person[field["index"]]
+            yield "div form(action:/save,method:post) div input(type:text,name:{},id:{},value:{})".format(field["name"], field["name"], value)
+        yield "div form(action:/save,method:post) button(type:submit) = Submit"
+
+
+    return Response(unflatten(generate()), mimetype='text/html')
+
+@app.route("/save", methods=["POST"])
+def save():
+    thing = request.form["thing"]
+    if thing not in forms:
+        return "Error in form"
+    id = request.form["id"]
+    saved_id = id
+    cur = conn.cursor()
+    if id == "new":
+        values = []
+        for field in forms[thing]["fields"]:
+            values.append(request.form[field["name"]])
+        cur.execute("""
+        insert into {} ({}) values (%s, %s, %s) returning id;
+        """.format(thing, columns(thing)), (*values,))
+        saved_id = cur.fetchone()[0]
+        conn.commit()
+    else:
+        values = []
+        set_str = []
+        for field in forms[thing]["fields"]:
+            values.append(request.form[field["name"]])
+            set_str.append("{} = %s".format(field["name"]))
+        values.append(request.form["id"])
+        sql = """
+        update {} set {} where id = %s;
+        """.format(thing, ",".join(set_str))
+        print(sql)
+        cur.execute(sql, (*values,))
+        conn.commit()
+    return redirect("forms/{}/{}".format(thing, saved_id))
+
+
 
 if __name__ == "__main__":
     app.run()
