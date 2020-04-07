@@ -388,6 +388,10 @@ def unflatten(flat_html):
                             # root.children.append(textNode)
                     else:
                         childrenLookups[path].append(text)
+                elif not done[path]:
+                    textNode = Element(element, className, childrenLookups[path], attrs)
+                    childrenLookups[previousPath].append(textNode)
+                    done[path] = True
             elif place == 0 and freshNode:
                 # childrenLookups[nextPath] = []
 
@@ -621,21 +625,22 @@ def feed():
         FeedItem("A long story", link="http://yahoo.com", score=70, author="sam")
     ]
     def generate():
-        yield "-link(rel:stylesheet,href:static/news.css,type:text/css)"
-        yield "-center table.itemlist(bgcolor:#f6f6ef)"
-        yield "center table.itemlist(bgcolor:#f6f6ef) tbody"
+
+        yield "-html head link(rel:stylesheet,href:static/news.css,type:text/css)"
+        yield "html body center table.itemlist(bgcolor:#f6f6ef)"
+        yield "html body center table.itemlist(bgcolor:#f6f6ef) tbody"
         for index, feed_item in enumerate(items):
-            yield "center table.itemlist(bgcolor:#f6f6ef) tbody +tr.athing td.title =" + str(index + 1)
-            yield "center table.itemlist(bgcolor:#f6f6ef) tbody tr.athing +td.title a.storylink(href:{}) =".format(feed_item.link) + feed_item.text
-            yield "center table.itemlist(bgcolor:#f6f6ef) tbody tr.athing +td.title span.sitebit.comhead = ("
-            yield "center table.itemlist(bgcolor:#f6f6ef) tbody tr.athing td.title span.sitebit.comhead a(href:{}) = {}".format(feed_item.link, feed_item.site())
-            yield "center table.itemlist(bgcolor:#f6f6ef) tbody tr.athing td.title span.sitebit.comhead = )"
-            yield "center table.itemlist(bgcolor:#f6f6ef) tbody +tr td(colspan:1) = "
-            yield "center table.itemlist(bgcolor:#f6f6ef) tbody tr +td.subtext span.score = " + str(feed_item.score)
-            yield "center table.itemlist(bgcolor:#f6f6ef) tbody tr td.subtext span.score = points"
-            yield "center table.itemlist(bgcolor:#f6f6ef) tbody tr td.subtext +span = by"
-            yield "center table.itemlist(bgcolor:#f6f6ef) tbody tr td.subtext span = " + str(feed_item.author)
-            
+            yield "html body center table.itemlist(bgcolor:#f6f6ef) tbody +tr.athing td.title =" + str(index + 1)
+            yield "html body center table.itemlist(bgcolor:#f6f6ef) tbody tr.athing +td.title a.storylink(href:{}) =".format(feed_item.link) + feed_item.text
+            yield "html body center table.itemlist(bgcolor:#f6f6ef) tbody tr.athing +td.title span.sitebit.comhead = ("
+            yield "html body center table.itemlist(bgcolor:#f6f6ef) tbody tr.athing td.title span.sitebit.comhead a(href:{}) = {}".format(feed_item.link, feed_item.site())
+            yield "html body center table.itemlist(bgcolor:#f6f6ef) tbody tr.athing td.title span.sitebit.comhead = )"
+            yield "html body center table.itemlist(bgcolor:#f6f6ef) tbody +tr td(colspan:1) = "
+            yield "html body center table.itemlist(bgcolor:#f6f6ef) tbody tr +td.subtext span.score = " + str(feed_item.score)
+            yield "html body center table.itemlist(bgcolor:#f6f6ef) tbody tr td.subtext span.score = points"
+            yield "html body center table.itemlist(bgcolor:#f6f6ef) tbody tr td.subtext +span = by"
+            yield "html body center table.itemlist(bgcolor:#f6f6ef) tbody tr td.subtext span = " + str(feed_item.author)
+
             # 260 points by tosh 1 hour ago | hide | 154 comments
 
     return Response(unflatten(generate()), mimetype='text/html')
