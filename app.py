@@ -11,6 +11,7 @@ from pprint import pprint
 import collections
 from datetime import datetime
 import operator
+import json
 
 try:
     conn = psycopg2.connect("dbname='forum' user='forum' host='localhost' password='forum'")
@@ -238,7 +239,7 @@ class Element():
         return html
 
     def serialize(self):
-        yield "<" + self.name + " class=\"" + self.className + "\"" + self.renderAttrs() + ">"
+        yield "<" + self.name + " class=\"" + self.className + "\" " + self.renderAttrs() + ">"
         for child in self.children:
             if isinstance(child, str):
                 yield child
@@ -254,7 +255,9 @@ def createAttrs(element):
         kvs = sides[1].split(")")[0].split(",")
 
         for kv in kvs:
-            field, value = kv.split(":")
+            splitted = kv.split(":")
+            field = splitted[0]
+            value = ":".join(splitted[1:])
             fields[field] = value
     return sides[0].replace("-", "").replace("+", "").replace("^", ""), fields
 
@@ -266,9 +269,10 @@ def unflatten(flat_html):
     done = {}
     parents = {}
     dones = {}
+    finished = {}
 
     for line in flat_html:
-        print("\"{}\",".format(line))
+        print("------->\"{}\",".format(line))
         textNodes = line.split("=")
         components = textNodes[0].split(" ")
         if components[len(components) - 1] == "":
@@ -310,18 +314,31 @@ def unflatten(flat_html):
             freshNode = component[0] == "-"
             sharedNode = component[0] == "+"
             parentNode = component[0] == "^"
+            if sharedNode:
+                childrenLookups[path] = []
+                sofar = ""
+                found = False
+                for subpath in line.split("=")[0].split(" "):
+                    corrected = subpath.replace("+", "").replace("-", "").replace("^", "")
+                    sofar += corrected + " "
+                    if "+" in subpath:
+                        found = True
+                    if found:
+                        childrenLookups[sofar] = []
+                        done[sofar] = False
+                        print("Emptying ", sofar)
+
             if parentNode:
 
                 for k, v in childrenLookups.items():
                     if len(k.split(" ")) >= 3:
 
                         childrenLookups[k] = []
+
                         # done[k] = False
             if freshNode:
-
-
                 yield from root.root_serialize()
-
+                finished = {}
                 rootChildren.clear()
                 subpath = ""
                 for k, v in childrenLookups.items():
@@ -329,31 +346,45 @@ def unflatten(flat_html):
                     done[k] = False
 
 
-            attrs = component.split(".")
+            splitted = component.split("(")
+            attrs = splitted[0].split(".")
             element = attrs[0]
             className = ""
 
 
 
             if len(attrs) == 2:
-                className = attrs[1]
+                className = " ".join(attrs[1:])
             end = False
             if path == nextPath:
                 end = True
 
             if end == True:
-                element, attrs = createAttrs(element)
-                if text:
-                    textNode = Element(element, className, [text], attrs)
-                else:
-                    textNode = Element(element, className, childrenLookups[path], attrs)
+                component, attrs = createAttrs(component)
+                splitted = component.split(".")
 
-                if previousPath != "":
-                    childrenLookups[previousPath].append(textNode)
-                done[path] = True
-                dones[component] = True
-                if place == 0:
-                    root.children.append(textNode)
+                element = splitted[0]
+                if len(splitted) > 1:
+                    className = " ".join(splitted[1:])
+                print(path)
+                if text != None:
+
+                    print("Filling text @" + path + "]", text)
+                    print(text)
+                    childrenLookups[path].append(text)
+                    print(childrenLookups[path])
+                    textNode = Element(element, className, childrenLookups[path], attrs)
+                    print(childrenLookups[previousPath])
+                    print(previousPath)
+                    if previousPath != "":
+                        childrenLookups[previousPath].append(textNode)
+                    done[path] = True
+
+                    dones[component] = True
+                    done[text] = True
+                    if place == 0:
+                        pass
+                        # root.children.append(textNode)
 
             elif place == 0 and freshNode:
                 # childrenLookups[nextPath] = []
@@ -363,6 +394,7 @@ def unflatten(flat_html):
                 # childrenLookups[previousPath].append(node)
                 done[path] = True
                 dones[component] = True
+                finished[line] = True
             elif parentNode:
                 if done[path] == False:
                     childrenLookups[path] = []
@@ -370,20 +402,28 @@ def unflatten(flat_html):
                     done[path] = True
                     dones[component] = True
                     childrenLookups[""] = childrenLookups[path]
+                    finished[line] = True
             elif sharedNode:
                 childrenLookups[path] = []
                 childrenLookups[previousPath].append(Element(element.replace("-", "").replace("+", "").replace("^", ""), className, childrenLookups[path], {}))
                 done[path] = True
-
+                finished[line] = True
 
             elif done[path]:
+
                 pass
 
             else:
-                element, attrs = createAttrs(element)
+                component, attrs = createAttrs(component)
+
+                splitted = component.split(".")
+                if len(splitted) > 1:
+                    className = " ".join(splitted[1:])
+                element = splitted[0]
                 childrenLookups[previousPath].append(Element(element, className, childrenLookups[path], attrs))
                 done[path] = True
                 dones[component] = True
+                finished[line] = True
 
 
 
@@ -451,12 +491,57 @@ for k, v in forms.items():
     index_fields(v)
 
 
-def columns(form):
+def columns(form, forms):
     column_list = map(operator.itemgetter("name"), forms[form]["fields"])
     return ",".join(column_list)
 
+def placeholders(form, forms):
+    text = []
+    for item in range(len(forms[form]["fields"])):
+        text.append("%s")
+    return ",".join(text)
+
+
+@app.route("/make", methods=["GET"])
+def make():
+    def generate():
+        yield "-div"
+        yield "div form(action:/make,method:post) input(type:text,name:name)"
+        yield "div form(action:/make,method:post) p = Place a list of fields, space separated"
+        yield "div form(action:/make,method:post) textarea(name:fields)"
+        yield "div form(action:/make,method:post) button(type:submit) = Submit"
+    return Response(unflatten(generate()), mimetype='text/html')
+
+
+@app.route("/make", methods=["POST"])
+def save_form():
+    r = re.compile("^[a-zA-Z0-9_\,\s]*$")
+    safe_name = r.match(request.form["name"]).group(0)
+    safe_fields = r.match(request.form["fields"]).group(0)
+    create_statement = """
+    create table if not exists {} (
+        id SERIAL PRIMARY KEY,
+        {}
+    );""".format(safe_name, safe_fields)
+    fields = list(map(lambda x: x.strip().split(" ")[0], safe_fields.split(",")))
+    forms[safe_name] = { "fields": list(map(lambda x: {"name": x, "label": x}, fields)) }
+    for k, v in forms.items():
+        index_fields(v)
+
+    open("forms.json", "w").write(json.dumps(forms))
+    print(fields)
+    print(create_statement)
+    cur = conn.cursor()
+    cur.execute(create_statement)
+    return redirect("/make")
+
+@app.route("/view", methods=["POST"])
+def view_forms():
+    pass
+
 @app.route("/forms/<form>/<id>", methods=["GET"])
 def render(form, id):
+    forms = json.loads(open("forms.json").read())
     if form not in forms:
         return "Error"
 
@@ -464,8 +549,10 @@ def render(form, id):
         cur = conn.cursor()
         cur.execute("""
         select {} from {} where id = %s;
-        """.format(columns(form), form), (id,))
+        """.format(columns(form, forms), form), (id,))
         person = cur.fetchone()
+
+
 
     def generate():
         yield "-div"
@@ -476,7 +563,7 @@ def render(form, id):
             value = ""
             if id != "new":
                 value = person[field["index"]]
-            yield "div form(action:/save,method:post) div input(type:text,name:{},id:{},value:{})"
+            yield "div form(action:/save,method:post) div input(type:text,name:{},id:{},value:{})" \
             .format(field["name"], field["name"], value)
         yield "div form(action:/save,method:post) button(type:submit) = Submit"
 
@@ -485,6 +572,7 @@ def render(form, id):
 
 @app.route("/save", methods=["POST"])
 def save():
+    forms = json.loads(open("forms.json").read())
     thing = request.form["thing"]
     if thing not in forms:
         return "Error in form"
@@ -496,8 +584,8 @@ def save():
         for field in forms[thing]["fields"]:
             values.append(request.form[field["name"]])
         cur.execute("""
-        insert into {} ({}) values (%s, %s, %s) returning id;
-        """.format(thing, columns(thing)), (*values,))
+        insert into {} ({}) values ({}) returning id;
+        """.format(thing, columns(thing, forms), placeholders(thing, forms)), (*values,))
         saved_id = cur.fetchone()[0]
         conn.commit()
     else:
@@ -515,6 +603,30 @@ def save():
         conn.commit()
     return redirect("forms/{}/{}".format(thing, saved_id))
 
+class FeedItem():
+    def __init__(self, text, link):
+        self.text = text
+        self.link = link
+    def site(self):
+        return self.link.replace("http://", "").replace("https://", "")
+
+@app.route("/feed", methods=["GET"])
+def feed():
+    items = [
+        FeedItem("A long story", link="http://google.com"),
+        FeedItem("A long story", link="http://yahoo.com")
+    ]
+    def generate():
+        yield "-link(rel:stylesheet,href:static/news.css,type:text/css)"
+        yield "-center table.itemlist(bgcolor:#f6f6ef)"
+        yield "center table.itemlist(bgcolor:#f6f6ef) tbody"
+        for index, feed_item in enumerate(items):
+            yield "center table.itemlist(bgcolor:#f6f6ef) tbody +tr.athing td.title =" + str(index + 1)
+            yield "center table.itemlist(bgcolor:#f6f6ef) tbody tr.athing +td.title a.storylink(href:{}) =".format(feed_item.link) + feed_item.text
+            yield "center table.itemlist(bgcolor:#f6f6ef) tbody tr.athing +td.title span.sitebit.comhead = ("
+            yield "center table.itemlist(bgcolor:#f6f6ef) tbody tr.athing td.title span.sitebit.comhead a(href:{}) = {}".format(feed_item.link, feed_item.site())
+            yield "center table.itemlist(bgcolor:#f6f6ef) tbody tr.athing td.title span.sitebit.comhead = )"
+    return Response(unflatten(generate()), mimetype='text/html')
 
 
 if __name__ == "__main__":

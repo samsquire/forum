@@ -1,0 +1,1 @@
+{"people": {"fields": [{"name": "firstname", "label": "First Name", "index": 0}, {"name": "lastname", "label": "Last Name", "index": 1}, {"name": "nickname", "label": "Nickname", "index": 2}]}, "authors": {"fields": [{"name": "blah", "label": "blah", "index": 0}, {"name": "blah2", "label": "blah2", "index": 1}]}}
