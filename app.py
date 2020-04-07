@@ -606,17 +606,19 @@ def save():
     return redirect("forms/{}/{}".format(thing, saved_id))
 
 class FeedItem():
-    def __init__(self, text, link):
+    def __init__(self, text, link, score, author):
         self.text = text
         self.link = link
+        self.score = score
+        self.author = author
     def site(self):
         return self.link.replace("http://", "").replace("https://", "")
 
 @app.route("/feed", methods=["GET"])
 def feed():
     items = [
-        FeedItem("A long story", link="http://google.com"),
-        FeedItem("A long story", link="http://yahoo.com")
+        FeedItem("A long story", link="http://google.com", score=50, author="sam"),
+        FeedItem("A long story", link="http://yahoo.com", score=70, author="sam")
     ]
     def generate():
         yield "-link(rel:stylesheet,href:static/news.css,type:text/css)"
@@ -628,6 +630,14 @@ def feed():
             yield "center table.itemlist(bgcolor:#f6f6ef) tbody tr.athing +td.title span.sitebit.comhead = ("
             yield "center table.itemlist(bgcolor:#f6f6ef) tbody tr.athing td.title span.sitebit.comhead a(href:{}) = {}".format(feed_item.link, feed_item.site())
             yield "center table.itemlist(bgcolor:#f6f6ef) tbody tr.athing td.title span.sitebit.comhead = )"
+            yield "center table.itemlist(bgcolor:#f6f6ef) tbody +tr td(colspan:1) = "
+            yield "center table.itemlist(bgcolor:#f6f6ef) tbody tr +td.subtext span.score = " + str(feed_item.score)
+            yield "center table.itemlist(bgcolor:#f6f6ef) tbody tr td.subtext span.score = points"
+            yield "center table.itemlist(bgcolor:#f6f6ef) tbody tr td.subtext +span = by"
+            yield "center table.itemlist(bgcolor:#f6f6ef) tbody tr td.subtext span = " + str(feed_item.author)
+            
+            # 260 points by tosh 1 hour ago | hide | 154 comments
+
     return Response(unflatten(generate()), mimetype='text/html')
 
 
