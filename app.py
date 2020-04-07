@@ -187,14 +187,13 @@ def add_thread():
     select * from categories where id = %s
     """, (request.form["category"],))
     category_id = cur.fetchone()[0]
-
+    dt = datetime.now()
     cur.execute("""
     insert into threads (title, category, author, published_date) values (%s, %s, %s, %s) returning id;
-    """, (request.form["title"], request.form["category"], user_email, datetime.now()))
+    """, (request.form["title"], request.form["category"], user_email, dt))
     id = cur.fetchone()[0]
     conn.commit()
 
-    dt = datetime.now()
     cur.execute("""
     insert into posts (thread, body, author, published_date) values (%s, %s, %s, %s) returning id;
     """, (id, request.form["body"], user_email, dt))
@@ -209,9 +208,10 @@ def add_thread():
 def add_post(thread):
     signed_in, username, user_email, email_token, login_token = check_signed_in()
     cur = conn.cursor()
+    dt = datetime.now()
     cur.execute("""
-    insert into posts (thread, body, author) values (%s, %s, %s) returning id;
-    """, (thread, request.form["body"], user_email))
+    insert into posts (thread, body, author, published_date) values (%s, %s, %s, %s) returning id;
+    """, (thread, request.form["body"], user_email, dt))
     category = request.form["category"]
     id = cur.fetchone()[0]
     conn.commit()
