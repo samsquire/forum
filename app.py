@@ -368,24 +368,26 @@ def unflatten(flat_html):
                     className = " ".join(splitted[1:])
                 print(path)
                 if text != None:
+                    if not done[path]:
+                        print(text)
+                        print("Filling text @" + path + "]", text)
+                        childrenLookups[path].append(text)
+                        print(childrenLookups[path])
+                        print(element)
+                        textNode = Element(element, className, childrenLookups[path], attrs)
+                        print(childrenLookups[previousPath])
+                        print(previousPath)
+                        if previousPath != "":
+                            childrenLookups[previousPath].append(textNode)
+                        done[path] = True
 
-                    print("Filling text @" + path + "]", text)
-                    print(text)
-                    childrenLookups[path].append(text)
-                    print(childrenLookups[path])
-                    textNode = Element(element, className, childrenLookups[path], attrs)
-                    print(childrenLookups[previousPath])
-                    print(previousPath)
-                    if previousPath != "":
-                        childrenLookups[previousPath].append(textNode)
-                    done[path] = True
-
-                    dones[component] = True
-                    done[text] = True
-                    if place == 0:
-                        pass
-                        # root.children.append(textNode)
-
+                        dones[component] = True
+                        done[text] = True
+                        if place == 0:
+                            pass
+                            # root.children.append(textNode)
+                    else:
+                        childrenLookups[path].append(text)
             elif place == 0 and freshNode:
                 # childrenLookups[nextPath] = []
 
