@@ -1,0 +1,79 @@
+{% extends "layout.html" %}
+{% block title %}Edit{% endblock %}
+{% block head %}
+  {{ super() }}
+  <style type="text/css">
+
+  </style>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.52.0/lib/codemirror.css" type="text/css"/>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.52.0/lib/codemirror.js"></script>
+
+{% endblock %}
+{% block content %}
+<h1>My computation<h1>
+<a href="/home">Back to scripts</a>
+
+<form action="/edit/{{ my_script[4] }}" method="post">
+<h3>HTML</h3>
+<div class="editor"><textarea id="html" name="html">{{ my_script[1] }}</textarea></div>
+<h3>CSS</h3>
+<div class="editor"><textarea id="css" name="css"> {{ my_script[3] }}</textarea></div>
+<h3>Javascript</h3>
+<div class="editor"><textarea id="javascript" name="javascript">{{ my_script[2] }}</textarea></div>
+<button type="submit">Submit</button>
+</form>
+
+<div id="output"></div>
+<script>
+var script_id = {{ script_id }};
+var panelOutputs = ["output-html", "output-css", "output-javascript"];
+var editors = document.querySelectorAll(".editor");
+var cms = [];
+for (let i = 0 ; i < editors.length ; i++) {
+	console.log( editors[i]);
+  var code = editors[i].querySelector("textarea");
+  var editor = CodeMirror.fromTextArea(code, {
+    inputStyle: "contenteditable",
+       lineNumbers: true
+    })
+    cms.push(editor);
+
+      editor.on("change", async function(cm) {
+      var outputZone = panelOutputs[i];
+      var data = {"html": cms[0].getValue(),
+              "css": cms[1].getValue(),
+              "javascript": cms[2].getValue()
+          }
+      console.log(data);
+      const response = await fetch("/editor", {
+            method: 'POST', // *GET, POST, PUT, DELETE, etc.
+            cache: 'no-cache', // *default, no-cache, reload, force-cache, only-if-cached
+            headers: {
+              'Content-Type': 'application/json'
+              // 'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            redirect: 'follow', // manual, *follow, error
+            referrerPolicy: 'no-referrer', // no-referrer, *client
+            body: JSON.stringify(data) // body data type must match "Content-Type" header
+          });
+      document.getElementById("output").innerHTML = await response.text();
+      eval("(function(script_id) {" + document.getElementById("output-javascript").innerHTML + "})(" + script_id + ")");
+      });
+}
+</script>
+
+<h1>Other computations</h1>
+{% for script in scripts %}
+<h2>{{ script[0] }}</h2>
+<style>
+{{ script[3] }}
+</style>
+function (script_id) {
+{{ script[1] }}
+}({{ script[4] }});
+<script>{{ script[2] }}</script>
+
+
+{% endfor %}
+
+{% endblock %}

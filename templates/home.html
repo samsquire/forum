@@ -1,0 +1,44 @@
+{% extends "layout.html" %}
+{% block title %}Profile{% endblock %}
+{% block head %}
+  {{ super() }}
+  <style type="text/css">
+
+  </style>
+{% endblock %}
+{% block content %}
+<h1>My computations<h1>
+<a href="edit/new">New script</a>
+
+{% for script in my_scripts %}
+<h2>{{ script[0] }}</h2>
+<style>
+{{ script[3]|safe }}
+</style>
+{{ script[1]|safe }}
+<script>
+(function (script_id) {
+{{ script[2]|safe }}
+})({{ script[4] }});
+</script>
+<a href="edit/{{ script[4]}}">Edit script</a>
+{% endfor %}
+
+
+<h1>Other computations</h1>
+{% for script in scripts %}
+<h2>{{ script[0] }}</h2>
+<style>
+{{ script[3] }}
+</style>
+{{ script[1] }}
+<script>
+(function (script_id) {
+{{ script[2] }}
+})({{ script[4] }})
+</script>
+
+
+{% endfor %}
+
+{% endblock %}

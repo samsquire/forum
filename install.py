@@ -39,6 +39,21 @@ create table if not exists people (
     lastname text,
     nickname text
 );
+
+create table if not exists scripts (
+    id serial primary key,
+    author text,
+    javascript text,
+    html text,
+    css text,
+    approved text
+);
+
+create table if not exists script_data (
+    id serial primary key,
+    data text
+)
+
 """)
 
 # close communication with the PostgreSQL database server

@@ -11,7 +11,7 @@
   {% for category in categories %}
     <a href="/categories/{{category[0]}}"><h2>{{ category[1] }}</h2></a>
     {% for thread in threads[category[1]] %}
-      <a href="/thread/{{ thread[0] }}"><h3>{{ thread[1] }}</h3></a>
+      <a href="/categories/{{category[0]}}/thread/{{ thread[0] }}"><h3>{{ thread[1] }}</h3></a>
     {% endfor %}
     <form method="post" action="/thread">
       Name <input type="text" name="title"/>

@@ -1,5 +1,5 @@
 from flask import Flask
-from flask import Response, render_template, redirect, request, make_response
+from flask import Response, render_template, redirect, request, make_response, jsonify
 import psycopg2
 import os, smtplib, ssl, time
 import yaml
@@ -12,6 +12,7 @@ import collections
 from datetime import datetime
 import operator
 import json
+
 
 try:
     conn = psycopg2.connect("dbname='forum' user='forum' host='localhost' password='forum'")
@@ -213,9 +214,115 @@ def add_post(thread):
     insert into posts (thread, body, author, published_date) values (%s, %s, %s, %s) returning id;
     """, (thread, request.form["body"], user_email, dt))
     category = request.form["category"]
-    id = cur.fetchone()[0]
     conn.commit()
+    id = cur.fetchone()[0]
     return make_response(redirect("/categories/" + category + "/thread/" + thread, 302))
+
+@app.route("/data/<id>", methods=["GET"])
+def get_data(id):
+    cur = conn.cursor()
+    if id != "new":
+        cur.execute("""
+        select data from script_data where id = %s
+        """, (id,))
+        script_data = cur.fetchone()
+    if not script_data or id == "new":
+        script_data = "{}"
+    r = Response(response=script_data, status=200, mimetype="application/json")
+    r.headers["Content-Type"] = "application/json"
+    return r
+
+@app.route("/data/<id>", methods=["POST"])
+def save_data(id):
+    cur = conn.cursor()
+    cur.execute("""
+    select data from script_data where id = %s
+    """, (re.sub('[^0-9a-zA-Z]+', '', id),))
+    script_data = cur.fetchone()
+    if script_data:
+        # update
+        cur.execute("""
+        update script_data set data = %s
+        """, (json.dumps(request.get_json()),))
+        conn.commit()
+    else:
+
+        cur.execute("""
+        insert into script_data (data) values (%s) returning id
+        """, (json.dumps(request.get_json()),))
+        conn.commit()
+
+    return Response(response="OK", status=200, mimetype="text/plain")
+
+@app.route("/home", methods=["GET"])
+def get_profile():
+    signed_in, username, user_email, email_token, login_token = check_signed_in()
+
+    cur = conn.cursor()
+    cur.execute("""
+    select author, html, javascript, css, id from scripts where author = %s
+    """, (user_email,))
+    my_scripts = cur.fetchmany(50)
+
+    cur = conn.cursor()
+    cur.execute("""
+    select author, html, javascript, css, id from scripts where author != %s
+    """, (user_email,))
+    scripts = cur.fetchmany(50)
+    return render_template("home.html", scripts=scripts, my_scripts=my_scripts, signed_in=signed_in, user_email=user_email)
+
+from flask import Markup
+
+@app.route("/editor", methods=["POST"])
+def render_js():
+    data = request.get_json()
+    return render_template("render.html", html=Markup(data["html"]), css=data["css"], javascript=data["javascript"])
+
+
+@app.route("/edit/<id>", methods=["GET"])
+def edit_script(id):
+    signed_in, username, user_email, email_token, login_token = check_signed_in()
+
+    if id != "new":
+        cur = conn.cursor()
+        cur.execute("""
+        select author, html, javascript, css, id from scripts where author = %s and id = %s;
+        """, (user_email, id))
+        my_script = cur.fetchone()
+    else:
+        # author, html, javascript, css, id
+        my_script = ("", "", "", "", "new")
+
+    cur = conn.cursor()
+    cur.execute("""
+    select author, html, javascript, css from scripts where author != %s;
+    """, (user_email,))
+    scripts = cur.fetchmany()
+
+    return render_template("edit.html", script_id=re.sub('[^0-9a-zA-Z]+', '', id), scripts=scripts, my_script=my_script, signed_in=signed_in, user_email=user_email)
+
+@app.route("/edit/<id>", methods=["POST"])
+def edit_submit(id):
+    signed_in, username, user_email, email_token, login_token = check_signed_in()
+
+    if id != "new":
+        cur = conn.cursor()
+        cur.execute("""
+        update scripts set html = %s, javascript = %s, css = %s where id = %s and author = %s returning id;
+        """, (request.form["html"], request.form["javascript"], request.form["css"], id, user_email))
+        my_script = cur.fetchone()
+    else:
+        # author, html, javascript, css, id
+        cur = conn.cursor()
+        cur.execute("""
+        insert into scripts (author, html, javascript, css, approved) values (%s, %s, %s, %s, %s) returning id;
+        """, (user_email, request.form["html"], request.form["javascript"], request.form["css"], "unapproved"))
+        my_script = cur.fetchone()
+
+    conn.commit()
+    return redirect("/home")
+
+
 
 class Element():
     def __init__(self, name, className, children=None, attrs={}):
@@ -468,7 +575,7 @@ def flat():
 
         yield "^div.users h1 =Books"
         for user in users:
-            yield "div.users h1 =" + user.name
+            yield "div.users +h1 =" + user.name
             for book in user.books():
                 yield "div.users +div.books h2 =" + book.name
                 yield "div.users div.books h3 = Reviews"
