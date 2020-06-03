@@ -1,7 +1,7 @@
 import psycopg2
 
 try:
-    conn = psycopg2.connect("dbname='forum' user='forum' host='localhost' password='forum'")
+    conn = psycopg2.connect("dbname='forum' user='forum' host='172.17.0.1' password='forum'")
 except Exception as e:
     print("I am unable to connect to the database")
     print(e)
@@ -52,7 +52,18 @@ create table if not exists scripts (
 create table if not exists script_data (
     id serial primary key,
     data text
-)
+);
+drop table if exists identikit_posts;
+create table if not exists identikit_posts (
+    id serial primary key,
+    body text
+);
+drop table if exists identikit_community_posting;
+create table if not exists identikit_community_posting (
+    id serial primary key,
+    post integer,
+    community text
+);
 
 """)
 

@@ -1,0 +1,31 @@
+{% extends "page.html" %}
+{% block content %}
+
+{% include "form_lookup.html" %}
+
+<a href="{{ community_link }}">Link to community</a>
+
+<h1>Send message to community</h1>
+<form method="post" action="/post">
+    <input name="community_id" type="hidden" value="{{ community_id }}"/>
+    <textarea name="message"></textarea>
+
+    <button type="submit">Send message</button>
+</form>
+
+<h1>Exact community matches</h1>
+
+<ol>
+{% for post in exact_posts %}
+<li>{{ post[0] }}</li>
+{% endfor %}
+</ol>
+
+<h1>Partial matches</h1>
+
+<ol>
+{% for post in posts %}
+<li>{{ post[0] }}</li>
+{% endfor %}
+</ol>
+{% endblock %}

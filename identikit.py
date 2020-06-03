@@ -1,5 +1,5 @@
 from flask import Flask
-from flask import Response, render_template, redirect, request, make_response, jsonify
+from flask import Response, render_template, redirect, request, make_response, jsonify, session
 import psycopg2
 import os, smtplib, ssl, time
 import yaml
@@ -15,15 +15,12 @@ import json
 
 
 try:
-    conn = psycopg2.connect("dbname='forum' user='forum' host='localhost' password='forum'")
+    conn = psycopg2.connect("dbname='forum' user='forum' host='172.17.0.1' password='forum'")
+    print(conn)
 except Exception as e:
     print("I am unable to connect to the database")
     print(e)
 
-try:
-    os.makedirs("/home/{}/secrets/tokens".format(os.environ["USER"]))
-except FileExistsError as e:
-    pass
 
 def check_signed_in(from_cookie=False):
     email = None
@@ -51,278 +48,9 @@ def check_signed_in(from_cookie=False):
 
 
 app = Flask(__name__)
-
-@app.route('/signin', methods=["POST"])
-def signin():
-
-    email = request.form["email"]
-    email_hashed = hashlib.sha256(email.encode('utf-8')).hexdigest()
-    user = uuid.uuid1()
-    token = uuid.uuid1()
-    token_folder = "/home/{}/secrets/tokens/{}".format(os.environ["USER"], email_hashed)
-    token_path = "/home/{}/secrets/tokens/{}/{}".format(os.environ["USER"], email_hashed, token)
-    try:
-        os.makedirs(token_folder)
-    except FileExistsError as e:
-        pass
-    open(token_path, "w").write("{} {}".format(email, user))
-    port = 465  # For SSL
-    smtp_server = "smtp.gmail.com"
-    sender_email = open("/home/{}/secrets/gmail-username".format(os.environ["USER"])).read()  # Enter your address
-    receiver_email = email
-    password = open("/home/{}/secrets/gmail-password".format(os.environ["USER"])).read()
-    message = """\
-Subject: Forum signin link
-
-Follow the link below to signin
-http://localhost:5000/?email={}&login={}""".format(email_hashed, token, user)
-
-    context = ssl.create_default_context()
-
-    with smtplib.SMTP_SSL(smtp_server, port, context=context) as server:
-        server.login(sender_email, password)
-        server.sendmail(sender_email, receiver_email, message)
-    return render_template('signin.html')
-
-
-@app.route("/")
-def forums():
-    signed_in, username, user_email, email_token, login_token = check_signed_in()
-
-    thread_list = {}
-    cur = conn.cursor()
-    categories = cur.execute("""
-    select * from categories;
-    """)
-    categories = list(cur.fetchmany(20))
-    threads = []
-    for category in categories:
-        cur.execute("""
-        select * from threads where category = %s;
-        """, (category[0],))
-        threads = cur.fetchmany(20)
-        thread_list[category[1]] = threads
-    response = make_response(render_template("categories.html", signed_in=signed_in, user_email=user_email, categories=categories, threads=thread_list))
-    if email_token:
-        response.set_cookie("email", email_token)
-    if login_token:
-        response.set_cookie("login", login_token)
-    return response
-
-
-@app.route("/", methods=["POST"])
-def add_forum():
-    signed_in, username, user_email, email_token, login_token = check_signed_in()
-    cur = conn.cursor()
-    cur.execute("""
-    insert into categories (title, published_date) values (%s, %s) returning id;
-    """, (request.form["category"], datetime.now()))
-    id = cur.fetchone()[0]
-    conn.commit()
-    return make_response(redirect("/categories/" + str(id), 302))
-
-
-
-@app.route("/categories/<category>")
-def threads(category):
-    signed_in, username, user_email, email_token, login_token = check_signed_in()
-    cur = conn.cursor()
-    cur.execute("""
-    select * from categories where id = %s;
-    """, (category,))
-    category_data = cur.fetchmany(1)[0]
-
-    cur.execute("""
-    select * from categories;
-    """, (category,))
-    categories = cur.fetchmany(20)
-
-    cur.execute("""
-    select * from threads where category = %s;
-    """, (category[0],))
-    threads = cur.fetchmany(50)
-    return render_template("threads.html", active_category=category_data, signed_in=signed_in, categories=categories, user_email=user_email, category=category_data, threads=threads)
-
-@app.route("/categories/<category>/thread/<thread>", methods=["GET"])
-def get_thread(category, thread):
-    signed_in, username, user_email, email_token, login_token = check_signed_in()
-    cur = conn.cursor()
-    cur.execute("""
-    select posts.body, posts.author, threads.category, posts.published_date from threads inner join posts on posts.thread = threads.id where threads.id = %s;
-    """, (thread,))
-    posts = cur.fetchmany(50)
-    pprint(cur.description)
-
-    signed_in, username, user_email, email_token, login_token = check_signed_in()
-    cur = conn.cursor()
-    cur.execute("""
-    select threads.id, threads.author, threads.title, threads.category, threads.published_date from threads where category = %s;
-    """, (category))
-    threads = cur.fetchmany(50)
-
-    cur.execute("""
-    select * from categories;
-    """, (category,))
-    categories = cur.fetchmany(50)
-
-    cur.execute("""
-    select * from categories where id = %s;
-    """, (posts[0][2],))
-    category = cur.fetchmany(1)[0]
-
-    cur.execute("""
-    select * from threads where id = %s;
-    """, (thread,))
-    thread = cur.fetchmany(1)[0]
-
-
-
-    return render_template("thread.html", active_thread=thread, active_category=category, signed_in=signed_in, categories=categories, user_email=user_email, thread=thread, category=category, posts=posts, threads=threads)
-
-
-@app.route("/thread", methods=["POST"])
-def add_thread():
-    signed_in, username, user_email, email_token, login_token = check_signed_in()
-    cur = conn.cursor()
-    cur.execute("""
-    select * from categories where id = %s
-    """, (request.form["category"],))
-    category_id = cur.fetchone()[0]
-    dt = datetime.now()
-    cur.execute("""
-    insert into threads (title, category, author, published_date) values (%s, %s, %s, %s) returning id;
-    """, (request.form["title"], request.form["category"], user_email, dt))
-    id = cur.fetchone()[0]
-    conn.commit()
-
-    cur.execute("""
-    insert into posts (thread, body, author, published_date) values (%s, %s, %s, %s) returning id;
-    """, (id, request.form["body"], user_email, dt))
-    id = cur.fetchone()[0]
-    conn.commit()
-    target = "/"
-    if request.form["category"]:
-        target = "/categories/" + str(category_id)
-    return redirect(target, 302)
-
-@app.route("/post/<thread>", methods=["POST"])
-def add_post(thread):
-    signed_in, username, user_email, email_token, login_token = check_signed_in()
-    cur = conn.cursor()
-    dt = datetime.now()
-    cur.execute("""
-    insert into posts (thread, body, author, published_date) values (%s, %s, %s, %s) returning id;
-    """, (thread, request.form["body"], user_email, dt))
-    category = request.form["category"]
-    conn.commit()
-    id = cur.fetchone()[0]
-    return make_response(redirect("/categories/" + category + "/thread/" + thread, 302))
-
-@app.route("/data/<id>", methods=["GET"])
-def get_data(id):
-    cur = conn.cursor()
-    if id != "new":
-        cur.execute("""
-        select data from script_data where id = %s
-        """, (id,))
-        script_data = cur.fetchone()
-    if not script_data or id == "new":
-        script_data = "{}"
-    r = Response(response=script_data, status=200, mimetype="application/json")
-    r.headers["Content-Type"] = "application/json"
-    return r
-
-@app.route("/data/<id>", methods=["POST"])
-def save_data(id):
-    cur = conn.cursor()
-    cur.execute("""
-    select data from script_data where id = %s
-    """, (re.sub('[^0-9a-zA-Z]+', '', id),))
-    script_data = cur.fetchone()
-    if script_data:
-        # update
-        cur.execute("""
-        update script_data set data = %s
-        """, (json.dumps(request.get_json()),))
-        conn.commit()
-    else:
-
-        cur.execute("""
-        insert into script_data (data) values (%s) returning id
-        """, (json.dumps(request.get_json()),))
-        conn.commit()
-
-    return Response(response="OK", status=200, mimetype="text/plain")
-
-@app.route("/home", methods=["GET"])
-def get_profile():
-    signed_in, username, user_email, email_token, login_token = check_signed_in()
-
-    cur = conn.cursor()
-    cur.execute("""
-    select author, html, javascript, css, id from scripts where author = %s
-    """, (user_email,))
-    my_scripts = cur.fetchmany(50)
-
-    cur = conn.cursor()
-    cur.execute("""
-    select author, html, javascript, css, id from scripts where author != %s
-    """, (user_email,))
-    scripts = cur.fetchmany(50)
-    return render_template("home.html", scripts=scripts, my_scripts=my_scripts, signed_in=signed_in, user_email=user_email)
+app.secret_key=os.environ["admin_pass"]
 
 from flask import Markup
-
-@app.route("/editor", methods=["POST"])
-def render_js():
-    data = request.get_json()
-    return render_template("render.html", html=Markup(data["html"]), css=data["css"], javascript=data["javascript"])
-
-
-@app.route("/edit/<id>", methods=["GET"])
-def edit_script(id):
-    signed_in, username, user_email, email_token, login_token = check_signed_in()
-
-    if id != "new":
-        cur = conn.cursor()
-        cur.execute("""
-        select author, html, javascript, css, id from scripts where author = %s and id = %s;
-        """, (user_email, id))
-        my_script = cur.fetchone()
-    else:
-        # author, html, javascript, css, id
-        my_script = ("", "", "", "", "new")
-
-    cur = conn.cursor()
-    cur.execute("""
-    select author, html, javascript, css from scripts where author != %s;
-    """, (user_email,))
-    scripts = cur.fetchmany()
-
-    return render_template("edit.html", script_id=re.sub('[^0-9a-zA-Z]+', '', id), scripts=scripts, my_script=my_script, signed_in=signed_in, user_email=user_email)
-
-@app.route("/edit/<id>", methods=["POST"])
-def edit_submit(id):
-    signed_in, username, user_email, email_token, login_token = check_signed_in()
-
-    if id != "new":
-        cur = conn.cursor()
-        cur.execute("""
-        update scripts set html = %s, javascript = %s, css = %s where id = %s and author = %s returning id;
-        """, (request.form["html"], request.form["javascript"], request.form["css"], id, user_email))
-        my_script = cur.fetchone()
-    else:
-        # author, html, javascript, css, id
-        cur = conn.cursor()
-        cur.execute("""
-        insert into scripts (author, html, javascript, css, approved) values (%s, %s, %s, %s, %s) returning id;
-        """, (user_email, request.form["html"], request.form["javascript"], request.form["css"], "unapproved"))
-        my_script = cur.fetchone()
-
-    conn.commit()
-    return redirect("/home")
-
-
 
 class Element():
     def __init__(self, name, className, children=None, attrs={}):
@@ -617,107 +345,6 @@ def placeholders(form, forms):
     return ",".join(text)
 
 
-@app.route("/make", methods=["GET"])
-def make():
-    def generate():
-        yield "-div"
-        yield "div form(action:/make,method:post) input(type:text,name:name)"
-        yield "div form(action:/make,method:post) p = Place a list of fields, space separated"
-        yield "div form(action:/make,method:post) textarea(name:fields)"
-        yield "div form(action:/make,method:post) button(type:submit) = Submit"
-    return Response(unflatten(generate()), mimetype='text/html')
-
-
-@app.route("/make", methods=["POST"])
-def save_form():
-    r = re.compile("^[a-zA-Z0-9_\,\s]*$")
-    safe_name = r.match(request.form["name"]).group(0)
-    safe_fields = r.match(request.form["fields"]).group(0)
-    create_statement = """
-    create table if not exists {} (
-        id SERIAL PRIMARY KEY,
-        {}
-    );""".format(safe_name, safe_fields)
-    fields = list(map(lambda x: x.strip().split(" ")[0], safe_fields.split(",")))
-    forms[safe_name] = { "fields": list(map(lambda x: {"name": x, "label": x}, fields)) }
-    for k, v in forms.items():
-        index_fields(v)
-
-    open("forms.json", "w").write(json.dumps(forms))
-    print(fields)
-    print(create_statement)
-    cur = conn.cursor()
-    cur.execute(create_statement)
-    return redirect("/make")
-
-@app.route("/view", methods=["POST"])
-def view_forms():
-    pass
-
-@app.route("/forms/<form>/<id>", methods=["GET"])
-def render(form, id):
-    forms = json.loads(open("forms.json").read())
-    if form not in forms:
-        return "Error"
-
-    if id != "new":
-        cur = conn.cursor()
-        cur.execute("""
-        select {} from {} where id = %s;
-        """.format(columns(form, forms), form), (id,))
-        person = cur.fetchone()
-
-
-
-    def generate():
-        yield "-div"
-        yield "div form(action:/save,method:post) input(type:hidden,name:thing,value:{})".format(form)
-        yield "div form(action:/save,method:post) input(type:hidden,name:id,value:{})".format(id)
-        for field in forms[form]["fields"]:
-            yield "div form(action:/save,method:post) +div label(for:{}) = {}".format(field["name"], field["label"])
-            value = ""
-            if id != "new":
-                value = person[field["index"]]
-            yield "div form(action:/save,method:post) div input(type:text,name:{},id:{},value:{})" \
-            .format(field["name"], field["name"], value)
-        yield "div form(action:/save,method:post) button(type:submit) = Submit"
-
-
-    return Response(unflatten(generate()), mimetype='text/html')
-
-@app.route("/save", methods=["POST"])
-def save():
-    forms = json.loads(open("forms.json").read())
-    thing = request.form["thing"]
-    if thing not in forms:
-        return "Error in form"
-    id = request.form["id"]
-    saved_id = id
-    cur = conn.cursor()
-    if id == "new":
-        values = []
-        for field in forms[thing]["fields"]:
-            values.append(request.form[field["name"]])
-        cur.execute("""
-        insert into {} ({}) values ({}) returning id;
-        """.format(thing, columns(thing, forms), placeholders(thing, forms)), (*values,))
-        saved_id = cur.fetchone()[0]
-        conn.commit()
-    else:
-        values = []
-        set_str = []
-        for field in forms[thing]["fields"]:
-            values.append(request.form[field["name"]])
-            set_str.append("{} = %s".format(field["name"]))
-        values.append(request.form["id"])
-        sql = """
-        update {} set {} where id = %s;
-        """.format(thing, ",".join(set_str))
-        print(sql)
-        cur.execute(sql, (*values,))
-        conn.commit()
-    return redirect("forms/{}/{}".format(thing, saved_id))
-
 class FeedItem():
     def __init__(self, text, link, score, author):
         self.text = text
@@ -758,7 +385,7 @@ def feed():
 def lookup():
     signed_in, username, user_email, email_token, login_token = check_signed_in()
 
-    return render_template("lookup.html", signed_in=signed_in, user_email=user_email, community_lookup="#PoliticalSide:Left_wing #Government:Small #Taxes:Small #VoluntaryCollectivism:Yes")
+    return render_template("lookup.html", signed_in=signed_in, user_email=user_email, community_lookup="#PoliticalSide:Left_wing #Government:Small #Taxes:Small #VoluntaryCollectivism:Yes #UniversalBasicIncome:yes")
 
 from functools import reduce
 import hashlib
@@ -767,7 +394,7 @@ import hashlib
 def find_communities():
     signed_in, username, user_email, email_token, login_token = check_signed_in()
     data = request.form["identikit"]
-
+    session["identikit"] = data
     positions = data.split(" ")
 
     positions.sort()
@@ -777,11 +404,11 @@ def find_communities():
     community_id = reduce(lambda previous, current: previous + ":" + current, hashed)
 
     print(community_id)
-
+    community_link = "communities/" + community_id
     exact_posts = get_exact_posts(community_id)
     posts = get_posts(hashed)
 
-    return render_template("results.html", exact_posts=exact_posts, posts=posts, community_id=community_id, signed_in=signed_in, user_email=user_email, community_lookup=data)
+    return render_template("results.html", community_link=community_link, exact_posts=exact_posts, posts=posts, community_id=community_id, signed_in=signed_in, user_email=user_email, community_lookup=data)
 
 def get_exact_posts(community_id):
     cur = conn.cursor()
@@ -807,7 +434,41 @@ def get_community(community_id):
 
     exact_posts = get_exact_posts(community_id)
     posts = get_posts(communities)
-    return render_template("results.html", exact_posts=exact_posts, posts=posts, community_id=community_id, signed_in=signed_in, user_email=user_email, community_lookup="")
+    return render_template("results.html", exact_posts=exact_posts, posts=posts, community_id=community_id, signed_in=signed_in, user_email=user_email, community_lookup=session["identikit"])
+
+admin_pass = os.environ["admin_pass"].strip()
+
+def get_admin_posts():
+    cur = conn.cursor()
+    categories = cur.execute("""
+    select distinct on (identikit_posts.id) identikit_posts.id, body, community from identikit_posts join identikit_community_posting on identikit_posts.id = identikit_community_posting.post
+    """, ())
+    admin_posts = list(cur.fetchmany(5000))
+    return admin_posts
+
+@app.route("/posts/" + admin_pass, methods=["GET"])
+def view_posts():
+    signed_in, username, user_email, email_token, login_token = check_signed_in()
+    admin_posts = get_admin_posts()
+
+    return render_template("admin.html", admin_pass=admin_pass, admin_posts=admin_posts, signed_in=signed_in, user_email=user_email, community_lookup="")
+
+@app.route("/delete/" + admin_pass + "/<id>", methods=["GET"])
+def delete_post(id):
+    signed_in, username, user_email, email_token, login_token = check_signed_in()
+    print("Deleting " + id)
+    cur = conn.cursor()
+    categories = cur.execute("""
+    delete from identikit_posts where id = %s
+    """, (id,))
+
+    cur = conn.cursor()
+    categories = cur.execute("""
+    delete from identikit_community_posting where post = %s
+    """, (id,))
+    conn.commit()
+    return redirect("/posts/{}".format(admin_pass))
+
 
 @app.route("/post", methods=["POST"])
 def post_message():
