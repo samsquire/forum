@@ -5,12 +5,30 @@
 
 <a href="{{ community_link }}">Link to community</a>
 
+<hr>
+
+
+
 <h1>Send message to community</h1>
 <form method="post" action="/post">
     <input name="community_id" type="hidden" value="{{ community_id }}"/>
-    <textarea name="message"></textarea>
 
-    <button type="submit">Send message</button>
+    <div style="height: 330px">
+        <div style="float: left;">
+            <textarea name="message" placeholder="Type a message" style="width: 400px; height: 300px"></textarea>
+
+        </div>
+        <div style="float: left;">
+
+            <select name="receivers" multiple="multiple" style="height: 300px;">
+                {% for receiver in receiver_list %}
+                <option value="{{ receiver }}">{{ receiver }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit">Send message</button>
+        </div>
+    </div>
+
 </form>
 
 <h1>Exact community matches</h1>

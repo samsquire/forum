@@ -1,0 +1,30 @@
+{% extends "page.html" %}
+{% block content %}
+
+<h1>Questionnaire</h1>
+
+<form method="post">
+
+<div class="form-group">
+   <label for="answer-id">Question ID</label>
+   <input type="text" value="{{ question_id }}" name="question_id" class="form-control" id="answer-id" placeholder="#PoliticalSide">
+ </div>
+ <div class="form-group">
+    <label for="question-text">Question text</label>
+    <input type="text" value="{{ question_text }}" name="question_text" class="form-control" id="question-text" placeholder="What political side are you on?">
+</div>
+
+<h2>Answers</h2>
+
+<ol>
+{% for answer in answers %}
+    <li><a href="/questions/{{ id }}/{{ answer.id }}">Edit answer</a> {{ answer.text }}</li>
+{% endfor %}
+</ol>
+<a href="/questions/{{ id }}/new">Add answer</a>
+
+
+<button type="submit">Submit</button>
+</form>
+
+{% endblock %}

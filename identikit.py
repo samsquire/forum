@@ -390,25 +390,58 @@ def lookup():
 from functools import reduce
 import hashlib
 
+def identikit_to_hash(data):
+    positions = data.split(" ")
+
+    if positions == [""]:
+        return ""
+    positions.sort()
+    hashed = list(map(lambda x: hashlib.sha256(x.encode('utf-8')).hexdigest(), positions))
+    community_id = reduce(lambda previous, current: previous + ":" + current, hashed)
+    return community_id
+
+def get_parent_communities(data, exact_posts):
+    communities = data.split(" ")
+    exact_communities = set([])
+    current_exact_community = []
+    for community in communities[:-1]:
+        current_exact_community.append(community)
+        exact_communities.add(identikit_to_hash(" ".join(current_exact_community)))
+    print(exact_communities)
+
+    for community in communities:
+        without = list(filter(lambda x: x != community, communities))
+        current_exact_community = []
+        for community in without:
+            current_exact_community.append(community)
+            exact_communities.add(identikit_to_hash(" ".join(current_exact_community)))
+
+
+    exact_posts = exact_posts + get_posts(exact_communities)
+
+    return exact_posts
+
 @app.route("/identikit", methods=["POST"])
 def find_communities():
     signed_in, username, user_email, email_token, login_token = check_signed_in()
     data = request.form["identikit"]
     session["identikit"] = data
-    positions = data.split(" ")
-
-    positions.sort()
-
-    hashed = list(map(lambda x: hashlib.sha256(x.encode('utf-8')).hexdigest(), positions))
-
-    community_id = reduce(lambda previous, current: previous + ":" + current, hashed)
+    community_id = identikit_to_hash(data)
+    hashed = community_id.split(":")
 
     print(community_id)
+
     community_link = "communities/" + community_id
     exact_posts = get_exact_posts(community_id)
     posts = get_posts(hashed)
 
-    return render_template("results.html", community_link=community_link, exact_posts=exact_posts, posts=posts, community_id=community_id, signed_in=signed_in, user_email=user_email, community_lookup=data)
+    if len(hashed) > 1:
+        exact_posts = get_parent_communities(data, exact_posts)
+
+
+    receiver_list = data.split(" ")
+
+    return render_template("results.html", receiver_list=receiver_list, community_link=community_link, exact_posts=exact_posts, posts=posts, community_id=community_id, signed_in=signed_in, user_email=user_email, community_lookup=data)
 
 def get_exact_posts(community_id):
     cur = conn.cursor()
@@ -434,7 +467,12 @@ def get_community(community_id):
 
     exact_posts = get_exact_posts(community_id)
     posts = get_posts(communities)
-    return render_template("results.html", exact_posts=exact_posts, posts=posts, community_id=community_id, signed_in=signed_in, user_email=user_email, community_lookup=session["identikit"])
+    receiver_list = session["identikit"].split(" ")
+
+    if len(communities) > 1:
+        exact_posts = get_parent_communities(session["identikit"], exact_posts)
+
+    return render_template("results.html", receiver_list=receiver_list, exact_posts=exact_posts, posts=posts, community_id=community_id, signed_in=signed_in, user_email=user_email, community_lookup=session["identikit"])
 
 admin_pass = os.environ["admin_pass"].strip()
 
@@ -473,10 +511,17 @@ def delete_post(id):
 @app.route("/post", methods=["POST"])
 def post_message():
     signed_in, username, user_email, email_token, login_token = check_signed_in()
-    community_id = request.form["community_id"]
-    print(community_id)
+
+    receivers = request.form.getlist('receivers')
+    print("Receivers is", receivers)
+    identikit =  " ".join(receivers)
+    print("identikit is [{}]".format(identikit))
+    print("Message will also be received by " + identikit)
+    community_id = identikit_to_hash(identikit)
 
     hashed = community_id.split(":")
+    if hashed == [""]:
+        hashed = []
 
     # author, html, javascript, css, id
     cur = conn.cursor()
@@ -484,6 +529,8 @@ def post_message():
     insert into identikit_posts (body) values (%s) returning id;
     """, (request.form["message"],))
     post_id = cur.fetchone()
+
+    print("Hashed is", hashed)
 
     for community in hashed:
         cur = conn.cursor()
@@ -496,13 +543,203 @@ def post_message():
     cur = conn.cursor()
     cur.execute("""
     insert into identikit_community_posting (post, community) values (%s, %s) returning id;
-    """, (post_id, community_id))
+    """, (post_id, request.form["community_id"]))
     community_post_id = cur.fetchone()
     print("Saved exact post as", community_post_id)
 
     conn.commit()
 
-    return redirect("communities/{}".format(community_id))
+    return redirect("communities/{}".format(request.form["community_id"]))
+
+class Question():
+    def __init__(self, id, short, text, answers):
+        self.text = text
+        self.id = id
+        self.short = short
+        self.answers = answers
+
+class Answer():
+    def __init__(self, id, text):
+        self.id = id
+        self.text = text
+        self.short = text.replace(" ", "_")
+
+questions = [Question(1, "PoliticalSide", "What political side are you on?", [Answer(1, "Left wing"), Answer(2, "Right wing"), Answer(3, "Centrist"), Answer(4, "Neither")])]
+
+from collections import defaultdict
+
+def get_questions():
+    cur = conn.cursor()
+    categories = cur.execute("""
+    select questions.id, answers.id, answers.answer from questions inner join answers on questions.id = answers.question;
+    """, ())
+    answers = list(cur.fetchmany(5000))
+    index = defaultdict(list)
+
+    for answer in answers:
+        index[answer[0]].append(Answer(answer[1], answer[2]))
+
+    cur = conn.cursor()
+    categories = cur.execute("""
+    select questions.id, questions.short, questions.question from questions;
+    """, ())
+    questions = list(cur.fetchmany(5000))
+
+    questions_list = []
+    for question in questions:
+        questions_list.append(Question(question[0], question[1], question[2], index[question[0]]))
+    return questions_list
+
+@app.route("/questionnaire", methods=["GET"])
+def questionnaire():
+    signed_in, username, user_email, email_token, login_token = check_signed_in()
+
+    questions_list = get_questions()
+
+    return render_template("questionnaire.html", questions=questions_list, signed_in=signed_in, user_email=user_email)
+
+@app.route("/view", methods=["GET"])
+def view_questions():
+    signed_in, username, user_email, email_token, login_token = check_signed_in()
+
+    cur = conn.cursor()
+    cur.execute("""
+    select questions.id, questions.question, questions.short from questions
+    """, (id,))
+    questions = cur.fetchmany(5000)
+
+    question_list = []
+    for question in questions:
+        question_list.append(Question(question[0], question[2], question[1], []))
+
+    return render_template("create.html", questions=question_list, signed_in=signed_in, user_email=user_email)
+
+@app.route("/delete/<id>", methods=["POST"])
+def delete_question(id):
+    cur = conn.cursor()
+    cur.execute("""
+    delete from answers where question = %s
+    """, (id,))
+
+    cur = conn.cursor()
+    cur.execute("""
+    delete from questions where id = %s
+    """, (id,))
+
+    conn.commit()
+    return redirect("/view")
+
+@app.route("/add/<id>", methods=["GET"])
+def add_question(id):
+    signed_in, username, user_email, email_token, login_token = check_signed_in()
+
+    if id == "new":
+        question_text = ""
+        question_id = ""
+        answer_list = []
+    else:
+        cur = conn.cursor()
+        cur.execute("""
+        select questions.id, questions.question, questions.short from questions where id = %s
+        """, (id,))
+        questions = cur.fetchone()
+
+        question_text = questions[1]
+        question_id = questions[2]
+
+        cur = conn.cursor()
+        cur.execute("""
+        select id, answer from answers where question = %s
+        """, (id,))
+        answers = cur.fetchmany(5000)
+        answer_list = []
+        for answer in answers:
+            answer_list.append(Answer(answer[0], answer[1]))
+
+    return render_template("add.html", id=id, question_id=question_id, question_text=question_text, answers=answer_list, signed_in=signed_in, user_email=user_email)
+
+
+@app.route("/add/<id>", methods=["POST"])
+def submit_question(id):
+    signed_in, username, user_email, email_token, login_token = check_signed_in()
+    if id == "new":
+        cur = conn.cursor()
+        categories = cur.execute("""
+        insert into questions (short, question) values (%s, %s) returning id
+        """, (request.form["question_id"], request.form["question_text"],))
+        created_id = list(cur.fetchone())
+    else:
+        cur = conn.cursor()
+        categories = cur.execute("""
+        update questions set short = %s, question = %s where id = %s returning id
+        """, (request.form["question_id"], request.form["question_text"], id,))
+        created_id = list(cur.fetchone())
+
+
+    print(created_id)
+    conn.commit()
+    return redirect("/add/{}".format(created_id[0]))
+
+@app.route("/questions/<qid>/<id>", methods=["GET"])
+def view_question(qid, id):
+    signed_in, username, user_email, email_token, login_token = check_signed_in()
+    if id == "new":
+        answer_text = ""
+    else:
+        cur = conn.cursor()
+        categories = cur.execute("""
+        select answer from answers where question = %s
+        """, (qid,))
+        question = list(cur.fetchone())
+        answer_text = question[0]
+
+    return render_template("answer.html", answer_text=answer_text, signed_in=signed_in, user_email=user_email)
+
+@app.route("/questions/<qid>/<id>", methods=["POST"])
+def save_question(qid, id):
+    signed_in, username, user_email, email_token, login_token = check_signed_in()
+    if id == "new":
+        cur = conn.cursor()
+        categories = cur.execute("""
+        insert into answers (answer, question) values (%s, %s) returning id
+        """, (request.form["answer_text"], qid))
+        answer = list(cur.fetchone())
+        answer_id = answer[0]
+    else:
+        cur = conn.cursor()
+        categories = cur.execute("""
+        update answers set answer = %s where id = %s returning id
+        """, (request.form["answer_text"], id,))
+        answer = list(cur.fetchone())
+        answer_text = answer[0]
+
+    conn.commit()
+    return redirect("/add/{}".format(qid))
+
+
+@app.route("/questionnaire", methods=["POST"])
+def questionnaire_to_community():
+    signed_in, username, user_email, email_token, login_token = check_signed_in()
+    questions_list = get_questions()
+    identikit = ""
+    print(request.form)
+    for question in questions_list:
+        print(question.short)
+        identikit += "#{}:{} ".format(question.short, request.form[question.short].replace(" ", "_"))
+    identikit = identikit[:-1]
+    session["identikit"] = identikit
+    community_id = identikit_to_hash(identikit)
+    hashed = community_id.split(":")
+
+
+    community_link = "communities/" + community_id
+    exact_posts = get_exact_posts(community_id)
+    posts = get_posts(hashed)
+
+    if len(hashed) > 1:
+        exact_posts = get_parent_communities(identikit, exact_posts)
+    receiver_list = identikit.split(" ")
+    return render_template("results.html", receiver_list=receiver_list, community_link=community_link, exact_posts=exact_posts, posts=posts, community_id=community_id, signed_in=signed_in, user_email=user_email, community_lookup=identikit)
 
 if __name__ == "__main__":
     app.run(port=80)

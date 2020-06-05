@@ -1,0 +1,14 @@
+{% extends "page.html" %}
+{% block content %}
+
+<h1>Answer</h1>
+
+<form method="post">
+<div class="form-group">
+   <label for="answer-text">Answer text</label>
+   <input type="text" value="{{ answer_text }}" name="answer_text" class="form-control" id="answer-text" placeholder="Left wing">
+ </div>
+<button type="submit">Submit</button>
+</form>
+
+{% endblock %}

@@ -1,0 +1,24 @@
+{% extends "page.html" %}
+{% block content %}
+
+<h1>Questionnaire add</h1>
+
+
+
+<ol>
+{% for question in questions %}
+    <li><a href="/add/{{ question.id }}">Edit</a> #{{ question.short }} {{ question.text }}
+
+        <form action="/delete/{{ question.id }}" method="post">
+            <button type="submit">Delete</button>
+        </form>
+
+    </li>
+{% endfor %}
+</ol>
+
+<a href="/add/new">Add question</a>
+
+
+
+{% endblock %}
