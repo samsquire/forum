@@ -53,12 +53,12 @@ create table if not exists script_data (
     id serial primary key,
     data text
 );
-
+drop table identikit_posts;
 create table if not exists identikit_posts (
     id serial primary key,
     body text
 );
-
+drop table identikit_community_posting;
 create table if not exists identikit_community_posting (
     id serial primary key,
     post integer,
