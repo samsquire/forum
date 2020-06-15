@@ -38,7 +38,7 @@
 
 {% for post in exact_posts %}
 <div style="position: relative; left: {{ post[3] * 15 }}px">
-<div style="color: #838383; font-size; 16pt">{{ post[1] }} <a href="/reply/{{ post[2] }}/{{ post[4] }}">Reply</a></div>
+<div style="color: #838383; font-size; 16pt">{{ post[1] }} <a href="/reply/{{ post[2] }}/{{ post[4] }}">reply</a></div>
 <div style="color: black; font-size; 16pt">{{ post[0] }}</div>
 </div>
 {% endfor %}
@@ -50,7 +50,7 @@
 <ol>
 {% for post in posts %}
 <div style="position: relative; left: {{ post[3] * 15 }}px">
-<div style="color: #838383; font-size; 16pt">{{ post[1] }}</div>
+<div style="color: #838383; font-size; 16pt">{{ post[1] }}  <a href="/reply/{{ post[2] }}/{{ post[4] }}">reply</a></div>
 <div style="color: black; font-size; 16pt">{{ post[0] }}</div>
 </div>
 {% endfor %}

@@ -12,7 +12,7 @@ import collections
 from datetime import datetime
 import operator
 import json
-
+from collections import defaultdict
 
 try:
     conn = psycopg2.connect("dbname='forum' user='forum' host='172.17.0.1' password='forum'")
@@ -548,17 +548,51 @@ def find_communities():
 def get_exact_posts(community_id):
     cur = conn.cursor()
     categories = cur.execute("""
-    select distinct on (identikit_posts.id) body, identikit_posts.name, identikit_posts.id, identikit_posts.reply_depth, identikit_community_posting.community from identikit_posts join identikit_community_posting on identikit_posts.id = identikit_community_posting.post where identikit_community_posting.community = %s
+    select distinct on (identikit_posts.id) body, identikit_posts.name, identikit_posts.id, identikit_posts.reply_depth, identikit_community_posting.community, identikit_posts.reply_to from identikit_posts join identikit_community_posting on identikit_posts.id = identikit_community_posting.post where identikit_community_posting.community = %s
     """, (community_id,))
     new_posts = list(cur.fetchmany(5000))
+    new_posts = reorder_posts_by_reply(new_posts)
     return new_posts
+
+ID = 2
+REPLY_TO = 5
+
+def append_children(post, added, index, child_posts):
+    returned_posts = []
+    for child_id in child_posts[post[ID]]:
+        returned_posts.append(index[child_id])
+        added.append(child_id)
+        returned_posts = returned_posts + append_children(index[child_id], added, index, child_posts)
+    return returned_posts
+
+def reorder_posts_by_reply(posts):
+
+    returned_posts = []
+    index = {}
+    child_posts = defaultdict(list)
+    for post in posts:
+        index[post[ID]] = post
+        child_posts[post[REPLY_TO]].append(post[ID])
+
+    added = []
+    returned_posts = []
+    for post in posts:
+        if post[ID] not in added:
+            added.append(post[ID])
+            returned_posts.append(index[post[ID]])
+            returned_posts = returned_posts + append_children(post, added, index, child_posts)
+
+    return returned_posts
+
+
 
 def get_posts(communities):
     cur = conn.cursor()
     categories = cur.execute("""
-    select distinct on (identikit_posts.id) body, identikit_posts.name, identikit_posts.id, identikit_posts.reply_depth, identikit_community_posting.community from identikit_posts join identikit_community_posting on identikit_posts.id = identikit_community_posting.post where identikit_community_posting.community in %s
+    select distinct on (identikit_posts.id) body, identikit_posts.name, identikit_posts.id, identikit_posts.reply_depth, identikit_community_posting.community, identikit_posts.reply_to from identikit_posts join identikit_community_posting on identikit_posts.id = identikit_community_posting.post where identikit_community_posting.community in %s
     """, (tuple(communities),))
     new_posts = list(cur.fetchmany(5000))
+    new_posts = reorder_posts_by_reply(new_posts)
     return new_posts
 
 @app.route("/communities/<community_id>", methods=["GET"])
@@ -689,8 +723,6 @@ class Answer():
 
 questions = [Question(1, "PoliticalSide", "What political side are you on?", [Answer(1, "Left wing"), Answer(2, "Right wing"), Answer(3, "Centrist"), Answer(4, "Neither")])]
 
-from collections import defaultdict
-
 def get_questions():
     cur = conn.cursor()
     categories = cur.execute("""
@@ -765,6 +797,7 @@ def add_question(id):
         question_text = ""
         question_id = ""
         answer_list = []
+        in_edit_mode = False
     else:
         cur = conn.cursor()
         cur.execute("""
@@ -783,8 +816,9 @@ def add_question(id):
         answer_list = []
         for answer in answers:
             answer_list.append(Answer(answer[0], answer[1]))
+        in_edit_mode = True
 
-    return render_template("add.html", id=id, question_id=question_id, question_text=question_text, answers=answer_list, signed_in=signed_in, user_email=user_email)
+    return render_template("add.html", id=id, in_edit_mode=in_edit_mode, question_id=question_id, question_text=question_text, answers=answer_list, signed_in=signed_in, user_email=user_email)
 
 
 @app.route("/add/<id>", methods=["POST"])
@@ -813,15 +847,27 @@ def view_question(qid, id):
     signed_in, username, user_email, email_token, login_token = check_signed_in()
     if id == "new":
         answer_text = ""
+        in_edit_mode = False
+        question_id = 0
+        answer_id = 0
     else:
         cur = conn.cursor()
         categories = cur.execute("""
-        select answer from answers where question = %s
+        select id from questions where id = %s
         """, (qid,))
         question = list(cur.fetchone())
-        answer_text = question[0]
+        question_id = question[0]
 
-    return render_template("answer.html", answer_text=answer_text, signed_in=signed_in, user_email=user_email)
+        cur = conn.cursor()
+        categories = cur.execute("""
+        select answer, id from answers where question = %s
+        """, (qid,))
+        answer = list(cur.fetchone())
+        answer_text = answer[0]
+        answer_id = answer[1]
+        in_edit_mode = True
+
+    return render_template("answer.html", in_edit_mode=in_edit_mode, qid=question_id, id=answer_id, answer_text=answer_text, signed_in=signed_in, user_email=user_email)
 
 @app.route("/questions/<qid>/<id>", methods=["POST"])
 def save_question(qid, id):
@@ -844,6 +890,14 @@ def save_question(qid, id):
     conn.commit()
     return redirect("/add/{}".format(qid))
 
+@app.route("/delete_answer/<qid>/<id>", methods=["POST"])
+def delete_answer(qid, id):
+    cur = conn.cursor()
+    categories = cur.execute("""
+    delete from answers where id = %s
+    """, (id))
+    conn.commit()
+    return redirect("/add/" + qid)
 
 @app.route("/questionnaire", methods=["POST"])
 def questionnaire_to_community():

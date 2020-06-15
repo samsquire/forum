@@ -10,5 +10,11 @@
  </div>
 <button type="submit">Submit</button>
 </form>
+{% if in_edit_mode %}
+<form method="post" action="/delete_answer/{{ qid }}/{{ id }}">
+<button type="submit">Delete answer</button>
+</form>
+{% endif %}
+
 
 {% endblock %}

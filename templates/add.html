@@ -16,15 +16,20 @@
 
 <h2>Answers</h2>
 
+{% if not in_edit_mode %}<i>Save first to add answers</i>{% endif %}
+
 <ol>
 {% for answer in answers %}
     <li><a href="/questions/{{ id }}/{{ answer.id }}">Edit answer</a> {{ answer.text }}</li>
 {% endfor %}
 </ol>
-<a href="/questions/{{ id }}/new">Add answer</a>
+
+<button type="submit">Save</button>
+
+{% if in_edit_mode %}<a href="/questions/{{ id }}/new">Add answer</a>{% endif %}
 
 
-<button type="submit">Submit</button>
+
 </form>
 
 {% endblock %}
