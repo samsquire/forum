@@ -9,9 +9,11 @@
 {% for question in questions %}
     <li><a href="/add/{{ question.id }}">Edit</a> #{{ question.short }} {{ question.text }}
 
+        {% if deletable_questions %}
         <form action="/delete/{{ question.id }}" method="post">
             <button type="submit">Delete</button>
         </form>
+        {% endif %}
 
     </li>
 {% endfor %}

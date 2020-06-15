@@ -1,0 +1,23 @@
+{% extends "page.html" %}
+{% block content %}
+
+<h1>Reply</h1>
+
+<div>Replying to post:</div>
+
+<div style="color: #838383; font-size; 16pt">{{ post[1] }}</div>
+<div style="color: black; font-size; 16pt">{{ post[0] }}</div>
+
+<form method="post" action="/reply/{{ post[2] }}/{{ community }}">
+        <div>
+            <div>Reply:</div>
+            <textarea name="message" placeholder="Type a message" style="width: 400px; height: 300px"></textarea>
+
+        </div>
+
+            <button type="submit">Reply</button>
+
+</form>
+
+
+{% endblock %}

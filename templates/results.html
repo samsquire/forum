@@ -15,11 +15,12 @@
 
     <div style="height: 330px">
         <div style="float: left;">
+            <div>Post</div>
             <textarea name="message" placeholder="Type a message" style="width: 400px; height: 300px"></textarea>
 
         </div>
         <div style="float: left;">
-
+            <div>X-post</div>
             <select name="receivers" multiple="multiple" style="height: 300px;">
                 {% for receiver in receiver_list %}
                 <option value="{{ receiver }}">{{ receiver }}</option>
@@ -34,16 +35,39 @@
 <h1>Exact community matches</h1>
 
 <ol>
+
 {% for post in exact_posts %}
-<li>{{ post[0] }}</li>
+<div style="position: relative; left: {{ post[3] * 15 }}px">
+<div style="color: #838383; font-size; 16pt">{{ post[1] }} <a href="/reply/{{ post[2] }}/{{ post[4] }}">Reply</a></div>
+<div style="color: black; font-size; 16pt">{{ post[0] }}</div>
+</div>
 {% endfor %}
+
 </ol>
 
 <h1>Partial matches</h1>
 
 <ol>
 {% for post in posts %}
-<li>{{ post[0] }}</li>
+<div style="position: relative; left: {{ post[3] * 15 }}px">
+<div style="color: #838383; font-size; 16pt">{{ post[1] }}</div>
+<div style="color: black; font-size; 16pt">{{ post[0] }}</div>
+</div>
 {% endfor %}
 </ol>
+
+<h1>Similar communities</h1>
+
+<ol>
+{% for similar_community in similar_communities %}
+<li><b>{{ similar_community[1] * 100 }}%</b> {{ similar_community[0] }}
+    <form action="/identikit" method="post">
+    <input type="hidden" name="identikit" value="{{ similar_community[0] }}"/>
+    <button type="submit">Go</button>
+    </form>
+</li>
+{% endfor %}
+</ol>
+
+
 {% endblock %}
