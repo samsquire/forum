@@ -472,19 +472,34 @@ def get_similar_communities(identikit):
     similarities.sort(key=lambda x: x[1], reverse=True)
     return similarities
 
-@app.route("/reply/<id>/<community>", methods=["GET"])
-def reply_post(id, community):
+@app.route("/reply/<id>/<cid>/<community>", methods=["GET"])
+def reply_post(id, cid, community):
+    cur = conn.cursor()
+    categories = cur.execute("""
+    select id from user_communities where id = %s
+    """, (cid, ))
+    fetched_community = cur.fetchone()
+    cid = fetched_community[0]
+
     cur = conn.cursor()
     categories = cur.execute("""
     select body, name, id from identikit_posts where id = %s
     """, (id, ))
     post = list(cur.fetchone())
-    return render_template("reply.html", post=post, community=community)
+    return render_template("reply.html", post=post, cid=cid, community=community)
 
-@app.route("/reply/<id>/<community>", methods=["POST"])
-def submit_reply(id, community):
+@app.route("/reply/<id>/<cid>/<community>", methods=["POST"])
+def submit_reply(id, cid, community):
+
     cur = conn.cursor()
-    categories = cur.execute("""
+    cur.execute("""
+    select id from user_communities where id = %s
+    """, (cid, ))
+    community_fetched = cur.fetchone()
+    cid = community_fetched[0]
+
+    cur = conn.cursor()
+    cur.execute("""
     select reply_depth from identikit_posts where id = %s
     """, (id, ))
     reply_post = list(cur.fetchone())
@@ -492,20 +507,20 @@ def submit_reply(id, community):
 
     cur = conn.cursor()
     cur.execute("""
-    insert into identikit_posts (body, reply_depth, reply_to, name) values (%s, %s, %s, %s) returning id
-    """, (request.form["message"], reply_depth, id, session.get("name", "Anonymous")))
+    insert into identikit_posts (body, reply_depth, reply_to, name, votes) values (%s, %s, %s, %s, %s) returning id
+    """, (request.form["message"], reply_depth, id, session.get("name", "Anonymous"), 0))
     reply_post = list(cur.fetchone())
 
     cur = conn.cursor()
     cur.execute("""
-    insert into identikit_community_posting (post, community) values (%s, %s) returning id;
-    """, (reply_post[0], community))
+    insert into identikit_community_posting (post, community, cid) values (%s, %s, %s) returning id;
+    """, (reply_post[0], community, cid))
     community_post_id = cur.fetchone()
     print("Saved post as", community_post_id)
 
     conn.commit()
 
-    return redirect("/communities/" + community)
+    return redirect("/communities/{}/{}".format(cid, community))
 
 @app.route("/identikit", methods=["POST"])
 def find_communities():
@@ -517,38 +532,48 @@ def find_communities():
 
     print(community_id)
 
-    community_link = "communities/" + community_id
+
     exact_posts = get_exact_posts(community_id)
     posts = get_posts(hashed)
 
     if len(hashed) > 1:
         exact_posts = get_parent_communities(data, exact_posts)
 
-
-    cur = conn.cursor()
-    categories = cur.execute("""
-    select user_name from user_communities where community = %s
-    """, (data,))
-    duplicate = cur.fetchone()
-
     similar_communities = get_similar_communities(data)
 
-    if not duplicate:
-        cur = conn.cursor()
-        categories = cur.execute("""
-        insert into user_communities (community, user_name) values (%s, %s) returning id
-        """, (data, session.get("name", "Anonymous"), ))
-        new_posts = list(cur.fetchone())
-        conn.commit()
+    community_link, cid = get_or_create_community(data, community_id)
 
     receiver_list = data.split(" ")
 
-    return render_template("results.html", similar_communities=similar_communities, receiver_list=receiver_list, community_link=community_link, exact_posts=exact_posts, posts=posts, community_id=community_id, signed_in=signed_in, user_email=user_email, community_lookup=data)
+    return render_template("results.html", cid=cid, similar_communities=similar_communities, receiver_list=receiver_list, community_link=community_link, exact_posts=exact_posts, posts=posts, community_id=community_id, signed_in=signed_in, user_email=user_email, community_lookup=data)
+
+def get_or_create_community(identikit, community_id):
+    cur = conn.cursor()
+    categories = cur.execute("""
+    select user_name, id from user_communities where community = %s
+    """, (identikit,))
+    duplicate = cur.fetchone()
+
+    if duplicate:
+        cid = duplicate[1]
+        community_link = "communities/{}/{}".format(cid, community_id)
+    else:
+        cur = conn.cursor()
+        categories = cur.execute("""
+        insert into user_communities (community, user_name) values (%s, %s) returning id
+        """, (identikit, session.get("name", "Anonymous"), ))
+        new_community = cur.fetchone()
+        cid = new_community[0]
+        community_link = "communities/{}/{}".format(cid, community_id)
+        conn.commit()
+    return community_link, cid
 
 def get_exact_posts(community_id):
     cur = conn.cursor()
     categories = cur.execute("""
-    select distinct on (identikit_posts.id) body, identikit_posts.name, identikit_posts.id, identikit_posts.reply_depth, identikit_community_posting.community, identikit_posts.reply_to from identikit_posts join identikit_community_posting on identikit_posts.id = identikit_community_posting.post where identikit_community_posting.community = %s
+    select distinct on (identikit_posts.id) body, identikit_posts.name, identikit_posts.id, identikit_posts.reply_depth, identikit_community_posting.community,
+    identikit_posts.reply_to, identikit_community_posting.cid, identikit_posts.votes
+    from identikit_posts join identikit_community_posting on identikit_posts.id = identikit_community_posting.post where identikit_community_posting.community = %s
     """, (community_id,))
     new_posts = list(cur.fetchmany(5000))
     new_posts = reorder_posts_by_reply(new_posts)
@@ -589,35 +614,45 @@ def reorder_posts_by_reply(posts):
 def get_posts(communities):
     cur = conn.cursor()
     categories = cur.execute("""
-    select distinct on (identikit_posts.id) body, identikit_posts.name, identikit_posts.id, identikit_posts.reply_depth, identikit_community_posting.community, identikit_posts.reply_to from identikit_posts join identikit_community_posting on identikit_posts.id = identikit_community_posting.post where identikit_community_posting.community in %s
+    select distinct on (identikit_posts.id) body, identikit_posts.name, identikit_posts.id, identikit_posts.reply_depth, identikit_community_posting.community,
+    identikit_posts.reply_to, identikit_community_posting.cid, identikit_posts.votes
+    from identikit_posts join identikit_community_posting on identikit_posts.id = identikit_community_posting.post where identikit_community_posting.community in %s
     """, (tuple(communities),))
     new_posts = list(cur.fetchmany(5000))
     new_posts = reorder_posts_by_reply(new_posts)
     return new_posts
 
-@app.route("/communities/<community_id>", methods=["GET"])
-def get_community(community_id):
+@app.route("/communities/<cid>/<community_id>", methods=["GET"])
+def get_community(cid, community_id):
     signed_in, username, user_email, email_token, login_token = check_signed_in()
-
+    cur = conn.cursor()
+    categories = cur.execute("""
+    select community from user_communities where id = %s
+    """, (cid,))
+    community = cur.fetchone()
+    identikit = community[0]
     communities = community_id.split(":")
 
     exact_posts = get_exact_posts(community_id)
     posts = get_posts(communities)
-    receiver_list = session["identikit"].split(" ")
+    receiver_list = identikit.split(" ")
 
     if len(communities) > 1:
-        exact_posts = get_parent_communities(session["identikit"], exact_posts)
+        exact_posts = get_parent_communities(identikit, exact_posts)
 
-    similar_communities = get_similar_communities(session["identikit"])
+    similar_communities = get_similar_communities(identikit)
 
-    return render_template("results.html", similar_communities=similar_communities, receiver_list=receiver_list, exact_posts=exact_posts, posts=posts, community_id=community_id, signed_in=signed_in, user_email=user_email, community_lookup=session["identikit"])
+    community_link, cid = get_or_create_community(identikit, community_id)
+
+    return render_template("results.html", cid=cid, community_link=community_link, similar_communities=similar_communities, receiver_list=receiver_list, exact_posts=exact_posts, posts=posts, community_id=community_id, signed_in=signed_in, user_email=user_email, community_lookup=identikit)
 
 admin_pass = os.environ["admin_pass"].strip()
 
 def get_admin_posts():
     cur = conn.cursor()
     categories = cur.execute("""
-    select distinct on (identikit_posts.id) identikit_posts.id, body, community, identikit_posts.name from identikit_posts join identikit_community_posting on identikit_posts.id = identikit_community_posting.post
+    select distinct on (identikit_posts.id) identikit_posts.id, body, community, identikit_posts.name from identikit_posts
+    join identikit_community_posting on identikit_posts.id = identikit_community_posting.post
     """, ())
     admin_posts = list(cur.fetchmany(5000))
     return admin_posts
@@ -659,6 +694,38 @@ def delete_post(id):
     conn.commit()
     return redirect("/posts/{}".format(admin_pass))
 
+@app.route("/upvote/<id>/<cid>/<community>", methods=["POST"])
+def upvote_post(id, cid, community):
+
+    cur = conn.cursor()
+    categories = cur.execute("""
+    select ip, post from post_votes where id = %s and ip = %s
+    """, (id, request.remote_addr))
+    voter_record = cur.fetchone()
+
+    if voter_record == None:
+        cur = conn.cursor()
+        categories = cur.execute("""
+        select votes from identikit_posts where id = %s
+        """, (id,))
+        identikit_post = cur.fetchone()
+        if identikit_post == None:
+            new_vote_count = 1
+        else:
+            new_vote_count = identikit_post[0] + 1
+
+        cur = conn.cursor()
+        categories = cur.execute("""
+        update identikit_posts set votes = %s where id = %s
+        """, (new_vote_count, id,))
+
+        cur = conn.cursor()
+        categories = cur.execute("""
+        insert into post_votes (ip, post) values (%s, %s)
+        """, (request.remote_addr, id,))
+        conn.commit()
+
+    return redirect("/communities/{}/{}".format(cid, community))
 
 @app.route("/post", methods=["POST"])
 def post_message():
@@ -670,7 +737,7 @@ def post_message():
     print("identikit is [{}]".format(identikit))
     print("Message will also be received by " + identikit)
     community_id = identikit_to_hash(identikit)
-
+    cid = request.form["cid"]
     hashed = community_id.split(":")
     if hashed == [""]:
         hashed = []
@@ -683,30 +750,31 @@ def post_message():
     # author, html, javascript, css, id
     cur = conn.cursor()
     cur.execute("""
-    insert into identikit_posts (body, name, reply_depth, reply_to) values (%s, %s, %s, %s) returning id;
-    """, (request.form["message"], username, 0, None))
+    insert into identikit_posts (body, name, reply_depth, reply_to, votes) values (%s, %s, %s, %s, %s) returning id;
+    """, (request.form["message"], username, 0, None, 0))
     post_id = cur.fetchone()
 
     print("Hashed is", hashed)
 
-    for community in hashed:
+    for receiver, community in zip(receivers, hashed):
         cur = conn.cursor()
+        community_link, cid = get_or_create_community(receiver, community)
         cur.execute("""
-        insert into identikit_community_posting (post, community) values (%s, %s) returning id;
-        """, (post_id, community))
+        insert into identikit_community_posting (post, community, cid) values (%s, %s, %s) returning id;
+        """, (post_id, community, cid))
         community_post_id = cur.fetchone()
         print("Saved post as", community_post_id)
 
     cur = conn.cursor()
     cur.execute("""
-    insert into identikit_community_posting (post, community) values (%s, %s) returning id;
-    """, (post_id, request.form["community_id"]))
+    insert into identikit_community_posting (post, community, cid) values (%s, %s, %s) returning id;
+    """, (post_id, request.form["community_id"], cid))
     community_post_id = cur.fetchone()
     print("Saved exact post as", community_post_id)
 
     conn.commit()
 
-    return redirect("communities/{}".format(request.form["community_id"]))
+    return redirect("communities/{}/{}".format(request.form["cid"], request.form["community_id"]))
 
 class Question():
     def __init__(self, id, short, text, answers):
@@ -913,8 +981,7 @@ def questionnaire_to_community():
     community_id = identikit_to_hash(identikit)
     hashed = community_id.split(":")
 
-
-    community_link = "communities/" + community_id
+    community_link, cid = get_or_create_community(identikit, community_id)
     exact_posts = get_exact_posts(community_id)
     posts = get_posts(hashed)
 
@@ -923,7 +990,7 @@ def questionnaire_to_community():
     receiver_list = identikit.split(" ")
 
     similar_communities = get_similar_communities(identikit)
-    return render_template("results.html", similar_communities=similar_communities, receiver_list=receiver_list, community_link=community_link, exact_posts=exact_posts, posts=posts, community_id=community_id, signed_in=signed_in, user_email=user_email, community_lookup=identikit)
+    return render_template("results.html", cid=cid, similar_communities=similar_communities, receiver_list=receiver_list, community_link=community_link, exact_posts=exact_posts, posts=posts, community_id=community_id, signed_in=signed_in, user_email=user_email, community_lookup=identikit)
 
 if __name__ == "__main__":
     app.run(port=80)

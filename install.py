@@ -53,19 +53,21 @@ create table if not exists script_data (
     id serial primary key,
     data text
 );
-
+drop table identikit_posts;
 create table if not exists identikit_posts (
     id serial primary key,
     body text,
     name text,
     reply_depth integer,
-    reply_to integer
+    reply_to integer,
+    votes integer
 );
-
+drop table identikit_community_posting;
 create table if not exists identikit_community_posting (
     id serial primary key,
     post integer,
-    community text
+    community text,
+    cid integer
 );
 
 create table if not exists questions (
@@ -85,6 +87,11 @@ create table if not exists user_communities (
     community text,
     user_name text
 );
+create table if not exists post_votes (
+    id serial primary key,
+    ip text,
+    post integer
+)
 """)
 
 # close communication with the PostgreSQL database server
