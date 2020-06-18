@@ -81,12 +81,13 @@ create table if not exists answers (
     question integer,
     answer text
 );
-
+drop table user_communities;
 create table if not exists user_communities (
     id serial primary key,
     community text,
     user_name text
 );
+drop table post_votes;
 create table if not exists post_votes (
     id serial primary key,
     ip text,

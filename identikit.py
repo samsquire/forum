@@ -408,20 +408,14 @@ def get_parent_communities(data, exact_posts):
     communities = data.split(" ")
     exact_communities = set([])
     current_exact_community = []
-    for community in communities[:-1]:
-        current_exact_community.append(community)
-        exact_communities.add(identikit_to_hash(" ".join(current_exact_community)))
-    print(exact_communities)
-
     for community in communities:
         without = list(filter(lambda x: x != community, communities))
-        current_exact_community = []
-        for community in without:
-            current_exact_community.append(community)
-            exact_communities.add(identikit_to_hash(" ".join(current_exact_community)))
+        exact_communities.add(identikit_to_hash(" ".join(without)))
 
-
-    exact_posts = exact_posts + get_posts(exact_communities)
+    pprint(exact_communities)
+    parent_community_posts = get_posts(exact_communities)
+    print(parent_community_posts)
+    exact_posts = exact_posts + parent_community_posts
 
     return exact_posts
 
@@ -569,6 +563,7 @@ def get_or_create_community(identikit, community_id):
     return community_link, cid
 
 def get_exact_posts(community_id):
+    print("Getting exact posts by " + community_id)
     cur = conn.cursor()
     categories = cur.execute("""
     select distinct on (identikit_posts.id) body, identikit_posts.name, identikit_posts.id, identikit_posts.reply_depth, identikit_community_posting.community,
@@ -577,6 +572,7 @@ def get_exact_posts(community_id):
     """, (community_id,))
     new_posts = list(cur.fetchmany(5000))
     new_posts = reorder_posts_by_reply(new_posts)
+    print(new_posts)
     return new_posts
 
 ID = 2
@@ -588,6 +584,8 @@ def append_children(post, added, index, child_posts):
         returned_posts.append(index[child_id])
         added.append(child_id)
         returned_posts = returned_posts + append_children(index[child_id], added, index, child_posts)
+
+
     return returned_posts
 
 def reorder_posts_by_reply(posts):
@@ -758,10 +756,10 @@ def post_message():
 
     for receiver, community in zip(receivers, hashed):
         cur = conn.cursor()
-        community_link, cid = get_or_create_community(receiver, community)
+        community_link, item_cid = get_or_create_community(receiver, community)
         cur.execute("""
         insert into identikit_community_posting (post, community, cid) values (%s, %s, %s) returning id;
-        """, (post_id, community, cid))
+        """, (post_id, community, item_cid))
         community_post_id = cur.fetchone()
         print("Saved post as", community_post_id)
 
