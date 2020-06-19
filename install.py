@@ -60,7 +60,8 @@ create table if not exists identikit_posts (
     name text,
     reply_depth integer,
     reply_to integer,
-    votes integer
+    votes integer,
+    parent integer
 );
 drop table identikit_community_posting;
 create table if not exists identikit_community_posting (
@@ -69,7 +70,12 @@ create table if not exists identikit_community_posting (
     community text,
     cid integer
 );
-
+drop table post_replies;
+create table post_replies (
+    id serial primary key,
+    parent integer,
+    post integer
+);
 create table if not exists questions (
     id serial primary key,
     short text,
@@ -81,6 +87,7 @@ create table if not exists answers (
     question integer,
     answer text
 );
+
 drop table user_communities;
 create table if not exists user_communities (
     id serial primary key,

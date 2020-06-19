@@ -482,6 +482,21 @@ def reply_post(id, cid, community):
     post = list(cur.fetchone())
     return render_template("reply.html", post=post, cid=cid, community=community)
 
+def get_parent_post(start):
+    current = start
+    parent = 0
+
+    while parent is not None:
+        cur = conn.cursor()
+        cur.execute("""
+        select id, parent from identikit_posts where id = %s
+        """, (current, ))
+        post = cur.fetchone()
+        parent = post[1]
+        current = parent
+
+    return post[0]
+
 @app.route("/reply/<id>/<cid>/<community>", methods=["POST"])
 def submit_reply(id, cid, community):
 
@@ -492,6 +507,9 @@ def submit_reply(id, cid, community):
     community_fetched = cur.fetchone()
     cid = community_fetched[0]
 
+    parent_post = get_parent_post(id)
+    print("Parent post is {}".format(parent_post))
+
     cur = conn.cursor()
     cur.execute("""
     select reply_depth from identikit_posts where id = %s
@@ -501,16 +519,22 @@ def submit_reply(id, cid, community):
 
     cur = conn.cursor()
     cur.execute("""
-    insert into identikit_posts (body, reply_depth, reply_to, name, votes) values (%s, %s, %s, %s, %s) returning id
-    """, (request.form["message"], reply_depth, id, session.get("name", "Anonymous"), 0))
+    insert into identikit_posts (body, reply_depth, reply_to, name, votes, parent) values (%s, %s, %s, %s, %s, %s) returning id
+    """, (request.form["message"], reply_depth, id, session.get("name", "Anonymous"), 0, parent_post))
     reply_post = list(cur.fetchone())
+
+    cur = conn.cursor()
+    cur.execute("""
+    insert into post_replies (parent, post) values (%s, %s) returning id
+    """, (parent_post, reply_post[0]))
+    post_replies_response = list(cur.fetchone())
 
     cur = conn.cursor()
     cur.execute("""
     insert into identikit_community_posting (post, community, cid) values (%s, %s, %s) returning id;
     """, (reply_post[0], community, cid))
     community_post_id = cur.fetchone()
-    print("Saved post as", community_post_id)
+    print("Saved post as", reply_post[0])
 
     conn.commit()
 
@@ -565,13 +589,26 @@ def get_or_create_community(identikit, community_id):
 def get_exact_posts(community_id):
     print("Getting exact posts by " + community_id)
     cur = conn.cursor()
-    categories = cur.execute("""
+    cur.execute("""
     select distinct on (identikit_posts.id) body, identikit_posts.name, identikit_posts.id, identikit_posts.reply_depth, identikit_community_posting.community,
-    identikit_posts.reply_to, identikit_community_posting.cid, identikit_posts.votes
+    identikit_posts.reply_to, identikit_community_posting.cid, identikit_posts.votes, identikit_posts.parent
     from identikit_posts join identikit_community_posting on identikit_posts.id = identikit_community_posting.post where identikit_community_posting.community = %s
     """, (community_id,))
     new_posts = list(cur.fetchmany(5000))
-    new_posts = reorder_posts_by_reply(new_posts)
+
+    replies = []
+    if new_posts:
+        cur.execute("""
+        select distinct on (identikit_posts.id) identikit_posts.body, identikit_posts.name, identikit_posts.id, identikit_posts.reply_depth, identikit_community_posting.community,
+        identikit_posts.reply_to, identikit_community_posting.cid, identikit_posts.votes
+        from identikit_posts join post_replies on identikit_posts.id = post_replies.post join identikit_community_posting on identikit_posts.id = identikit_community_posting.post
+
+        """, (tuple(map(lambda x: x[2], new_posts)),))
+        replies = list(cur.fetchmany(5000))
+
+    print("REPLIES")
+    print(replies)
+    new_posts = reorder_posts_by_reply(new_posts + replies)
     print(new_posts)
     return new_posts
 
@@ -581,9 +618,12 @@ REPLY_TO = 5
 def append_children(post, added, index, child_posts):
     returned_posts = []
     for child_id in child_posts[post[ID]]:
-        returned_posts.append(index[child_id])
-        added.append(child_id)
-        returned_posts = returned_posts + append_children(index[child_id], added, index, child_posts)
+        if child_id not in added:
+            returned_posts.append(index[child_id])
+            added.append(child_id)
+            returned_posts = returned_posts + append_children(index[child_id], added, index, child_posts)
+        else:
+            print("Already seen")
 
 
     return returned_posts
