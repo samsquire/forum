@@ -429,7 +429,7 @@ def get_parent_communities(data, exact_posts):
         without = list(filter(lambda x: x != community, communities))
         exact_communities.add(identikit_to_hash(" ".join(without)))
 
-    parent_community_posts = get_posts(conn, ":".join(exact_communities), exact_communities)
+    parent_community_posts = get_posts(":".join(exact_communities), exact_communities)
 
     exact_posts = exact_posts + parent_community_posts
 
@@ -593,9 +593,9 @@ def find_communities():
     similar_communities = get_similar_communities(data)
 
     community_link, cid = get_or_create_community(data, community_id)
-    exact_posts = get_exact_posts(conn, cid, community_id)
+    exact_posts = get_exact_posts(cid, community_id)
     print(community_id)
-    posts = get_posts(conn, community_id, hashed)
+    posts = get_posts(community_id, hashed)
 
     if len(hashed) > 1:
         exact_posts = get_parent_communities(data, exact_posts)
@@ -626,7 +626,7 @@ def get_or_create_community(identikit, community_id):
         r.delete("all_communities")
     return community_link, cid
 
-def get_exact_posts(conn, cid, community_id):
+def get_exact_posts(cid, community_id):
     redis_key = "community_posts_{}".format(cid)
 
     if r.exists(redis_key):
@@ -719,7 +719,7 @@ class Cache():
             print("Deleting " + str(member))
             r.delete(member)
 
-def get_posts(conn, community_id, communities):
+def get_posts(community_id, communities):
     redis_key = "posts_" + community_id
     c = Cache(redis_key)
     if c.exists():
@@ -841,80 +841,6 @@ tracer = config.initialize_tracer()
 class WorkOutput():
     pass
 
-import multiprocessing
-
-queue1 = multiprocessing.Queue()
-queue2 = multiprocessing.Queue()
-queue3 = multiprocessing.Queue()
-
-
-
-def worker(q, r):
-    conn = psycopg2.connect("dbname='forum' user='forum' host='172.17.0.1' password='forum'")
-
-    def task1(arg1):
-        time.sleep(5)
-        return "RESULT1"
-
-    def task2(arg1):
-        time.sleep(5)
-        return "RESULT2"
-
-    def task3(arg3):
-        time.sleep(5)
-        return "RESULT3"
-
-    def get_community(cid):
-        with tracer.start_span('get community') as span:
-            cur = conn.cursor()
-            cur.execute("""
-            select community from user_communities where id = %s
-            """, (cid,))
-            community = cur.fetchone()
-            span.log_kv({"community": community})
-
-            return community[0]
-
-    def get_exacts(cid, community_id):
-        with tracer.start_span('get exact posts') as span:
-
-            return get_exact_posts(conn, cid, community_id)
-
-    def get_partials(community_id, communities):
-        with tracer.start_span('get partials') as span:
-            return get_posts(conn, community_id, communities)
-
-    running = True
-    while running:
-
-        work, args = q.get()
-        print("Received " + work)
-        if work == None:
-            running = False
-            continue
-        result = locals()[work](*args)
-        
-        print("Done " + work)
-        r.put(result)
-
-
-
-
-r1 = multiprocessing.Queue()
-r2 = multiprocessing.Queue()
-r3 = multiprocessing.Queue()
-
-p1 = multiprocessing.Process(target=worker, args=(queue1, r1))
-p1.daemon = True
-p2 = multiprocessing.Process(target=worker, args=(queue2, r2))
-p2.daemon = True
-p3 = multiprocessing.Process(target=worker, args=(queue3, r3))
-p3.daemon = True
-
-p1.start()
-p2.start()
-p3.start()
-
 @app.route("/communities/<cid>/<community_id>", methods=["GET"])
 def get_community(cid, community_id):
     def work(cid, community_id):
@@ -931,25 +857,61 @@ def get_community(cid, community_id):
             t.start()
             t.start()
 
+            class GetC(Thread):
+                def __init__(self, span):
+                    super(GetC, self).__init__()
+                    self.span = span
+
+                def run(self):
+                    with tracer.start_span('get community', child_of=self.span) as span:
+                        cur = conn.cursor()
+                        cur.execute("""
+                        select community from user_communities where id = %s
+                        """, (cid,))
+                        community = cur.fetchone()
+                        span.log_kv({"community": community})
+                        t.stop("get community")
+                        work_output.identikit = community[0]
 
             work_output.communities = community_id.split(":")
 
-            # queue1.put(("task1", (cid)))
-            # queue2.put(("task2", (cid, work_output.communities)))
-            # queue3.put(("task3", (cid, community_id)))
-            queue1.put(("task1", (1,)))
-            queue2.put(("task2", (1,)))
-            queue3.put(("task3", (1,)))
+            class GetP(Thread):
+                def __init__(self, span):
+                    super(GetP, self).__init__()
+                    self.span = span
+                def run(self):
+                    with tracer.start_span('get exact posts', child_of=self.span) as span:
+                        t.start()
+                        work_output.exact_posts = get_exact_posts(cid, community_id)
+                        t.stop("get exact posts")
 
-            # workoutput.identikit = r1.get()
-            # workoutput.posts = r2.get()
-            # workout.exact_posts = r3.get()
 
-            print(r1.get())
-            print(r2.get())
-            print(r3.get())
+            class GetE(Thread):
+                def __init__(self, span):
+                    super(GetE, self).__init__()
+                    self.span = span
+
+                def run(self):
+                    with tracer.start_span('get partials', child_of=self.span) as span:
+                        t.start()
+                        work_output.posts = get_posts(community_id, work_output.communities)
+                        t.stop("get partials")
+
+
+            get_c = GetC(span)
+            get_e = GetE(span)
+            get_p = GetP(span)
+
+            get_c.start()
+            get_e.start()
+            get_p.start()
+
+            get_c.join()
+            get_e.join()
+            get_p.join()
 
             work_output.receiver_list = work_output.identikit.split(" ")
+
             with tracer.start_span('get parents', child_of=span) as span:
                 t.start()
                 if len(work_output.communities) > 1:
@@ -1347,8 +1309,8 @@ def questionnaire_to_community():
     hashed = community_id.split(":")
 
     community_link, cid = get_or_create_community(identikit, community_id)
-    exact_posts = get_exact_posts(conn, cid, community_id)
-    posts = get_posts(conn, community_id, hashed)
+    exact_posts = get_exact_posts(cid, community_id)
+    posts = get_posts(community_id, hashed)
 
     if len(hashed) > 1:
         exact_posts = get_parent_communities(identikit, exact_posts)
@@ -1356,3 +1318,6 @@ def questionnaire_to_community():
 
     similar_communities = get_similar_communities(identikit)
     return render_template("results.html", cid=cid, similar_communities=similar_communities, receiver_list=receiver_list, community_link=community_link, exact_posts=exact_posts, posts=posts, community_id=community_id, signed_in=signed_in, user_email=user_email, community_lookup=identikit)
+
+if __name__ == "__main__":
+    app.run(port=80)
