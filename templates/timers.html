@@ -1,0 +1,8 @@
+<table border="1">
+{% for timer in timers %}
+<tr>
+    <td>{{ "{:02f}".format(timer[0]) }}ms</td>
+    <td>{{ timer[1] }}</td>
+</tr>
+{% endfor %}
+</table>
