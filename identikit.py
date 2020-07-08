@@ -393,9 +393,35 @@ def feed():
 
     return Response(unflatten(generate()), mimetype='text/html')
 
+def get_top_posts():
+    print("Getting top posts")
+    cur = conn.cursor()
+    statement = """
+    select identikit_posts.body, identikit_posts.name, identikit_posts.id, identikit_posts.reply_depth,
+    identikit_community_posting.community,
+    identikit_posts.reply_to, identikit_community_posting.cid, identikit_posts.votes, identikit_posts.parent, identikit_community_posting.cid
+    from identikit_posts join identikit_community_posting on identikit_posts.id = identikit_community_posting.post
+    where identikit_posts.votes > 3
+    order by identikit_posts.votes desc, identikit_posts.id desc
+    """.format()
+    print(statement)
+    cur.execute(statement, ())
+    new_posts = list(cur.fetchmany(5000))
+    seen = {}
+    posts = []
+    for post in new_posts:
+        if seen.get(post[2]):
+            continue
+        posts.append(post)
+        seen[post[2]] = True
+
+    return posts
+
+
 @app.route("/", methods=["GET"])
 def homepage():
-    return redirect("/identikit")
+    top_posts = get_top_posts()
+    return render_template("top.html", posts=top_posts)
 
 @app.route("/identikit", methods=["GET"])
 def lookup():
@@ -582,10 +608,35 @@ def submit_reply(id, cid, community):
 
     return redirect("/communities/{}/{}".format(cid, community))
 
+def get_sort_options():
+    return [
+    ("id-desc", "Newest first", False),
+    ("id-asc", "Oldest first", False),
+    ("votes-asc", "Lowest first", False),
+    ("votes-desc", "Highest first", False)
+    ]
+
+def get_sort_mode():
+    if session.get("sort") and request.form.get("sort") == None:
+        sort_mode = session["sort"]
+    else:
+        sort_mode = request.form.get("sort", "id-asc")
+        session["sort"] = sort_mode
+
+    def update_sort(sort_option):
+        if sort_option[0] == sort_mode:
+            return (sort_option[0], sort_option[1], True)
+        else:
+            return (sort_option[0], sort_option[1], False)
+    sort_options = map(update_sort, get_sort_options())
+    return sort_mode, sort_options
+
 @app.route("/identikit", methods=["POST"])
 def find_communities():
     signed_in, username, user_email, email_token, login_token = check_signed_in()
     data = request.form["identikit"]
+    if data == "":
+        return redirect("/identikit")
     session["identikit"] = data
     community_id = identikit_to_hash(data)
     hashed = community_id.split(":")
@@ -593,8 +644,13 @@ def find_communities():
     similar_communities = get_similar_communities(data)
 
     community_link, cid = get_or_create_community(data, community_id)
-    exact_posts = get_exact_posts(cid, community_id)
-    print(community_id)
+
+    sort_mode, sort_options = get_sort_mode()
+
+    print(sort_mode)
+    exact_posts = get_exact_posts(cid, community_id, sort_mode)
+    print(exact_posts)
+
     posts = get_posts(community_id, hashed)
 
     if len(hashed) > 1:
@@ -602,7 +658,8 @@ def find_communities():
 
     receiver_list = data.split(" ")
 
-    return render_template("results.html", cid=cid, similar_communities=similar_communities, receiver_list=receiver_list, community_link=community_link, exact_posts=exact_posts, posts=posts, community_id=community_id, signed_in=signed_in, user_email=user_email, community_lookup=data)
+    return render_template("results.html", cid=cid, similar_communities=similar_communities, receiver_list=receiver_list, community_link=community_link, exact_posts=exact_posts,
+    posts=posts, community_id=community_id, signed_in=signed_in, user_email=user_email, community_lookup=data, sort_options=sort_options)
 
 def get_or_create_community(identikit, community_id):
     cur = conn.cursor()
@@ -626,22 +683,36 @@ def get_or_create_community(identikit, community_id):
         r.delete("all_communities")
     return community_link, cid
 
-def get_exact_posts(cid, community_id):
-    redis_key = "community_posts_{}".format(cid)
-
-    if r.exists(redis_key):
-        posts_str = r.get(redis_key)
-        new_posts = pickle.loads(posts_str)
+def get_exact_posts(cid, community_id, sort="votes-desc"):
+    redis_key = "community_posts_{}_{}".format(cid, sort)
+    print(redis_key)
+    c = Cache(redis_key)
+    if c.exists():
+        print("Sort mode exists")
+        new_posts = c.lookup()
         return new_posts
     else:
+        sort_field, sort_order = sort.split("-")
+
+        if sort_field == "votes":
+            real_sort_field = "identikit_posts.votes"
+        if sort_field == "id":
+            real_sort_field = "identikit_posts.id"
+        if sort_order == "desc":
+            real_sort_order = "desc"
+        elif sort_order == "asc":
+            real_sort_order = "asc"
 
         print("Getting exact posts by " + community_id)
         cur = conn.cursor()
-        cur.execute("""
-        select distinct on (identikit_posts.id) body, identikit_posts.name, identikit_posts.id, identikit_posts.reply_depth, identikit_community_posting.community,
+        statement = """
+        select body, identikit_posts.name, identikit_posts.id, identikit_posts.reply_depth, identikit_community_posting.community,
         identikit_posts.reply_to, identikit_community_posting.cid, identikit_posts.votes, identikit_posts.parent
         from identikit_posts join identikit_community_posting on identikit_posts.id = identikit_community_posting.post where identikit_community_posting.community = %s
-        """, (community_id,))
+        order by {} {}
+        """.format(real_sort_field, real_sort_order)
+        print(statement)
+        cur.execute(statement, (community_id,))
         new_posts = list(cur.fetchmany(5000))
 
         replies = []
@@ -654,18 +725,21 @@ def get_exact_posts(cid, community_id):
             """, (tuple(map(lambda x: x[2], new_posts)),))
             replies = list(cur.fetchmany(5000))
 
+        print("Fresh fetch")
         new_posts = reorder_posts_by_reply(new_posts + replies)
-        posts_str = pickle.dumps(new_posts)
-        r.set(redis_key, posts_str)
+        c.save(new_posts)
+        redis_key = "community_posts_{}".format(cid)
+        c.add_dependency(redis_key)
 
     return new_posts
 
 ID = 2
-REPLY_TO = 5
+REPLY_TO = 4
 
 def append_children(post, added, index, child_posts):
     returned_posts = []
     for child_id in child_posts[post[ID]]:
+        print("Found child post " + str(child_id))
         if child_id not in added:
             returned_posts.append(index[child_id])
             added.append(child_id)
@@ -673,11 +747,10 @@ def append_children(post, added, index, child_posts):
         else:
             print("Already seen")
 
-
     return returned_posts
 
 def reorder_posts_by_reply(posts):
-
+    print(posts)
     returned_posts = []
     index = {}
     child_posts = defaultdict(list)
@@ -685,6 +758,7 @@ def reorder_posts_by_reply(posts):
         index[post[ID]] = post
         child_posts[post[REPLY_TO]].append(post[ID])
 
+    pprint(child_posts)
     added = []
     returned_posts = []
     for post in posts:
@@ -692,7 +766,7 @@ def reorder_posts_by_reply(posts):
             added.append(post[ID])
             returned_posts.append(index[post[ID]])
             returned_posts = returned_posts + append_children(post, added, index, child_posts)
-
+            print(returned_posts)
     return returned_posts
 
 class Cache():
@@ -744,18 +818,32 @@ def get_posts(community_id, communities):
 
     return new_posts
 
-def get_comments(post_id):
+def get_comments(post_id, sort):
+    sort_field, sort_order = sort.split("-")
+
+    if sort_field == "votes":
+        real_sort_field = "post_comments.votes"
+    if sort_field == "id":
+        real_sort_field = "post_comments.id"
+    if sort_order == "desc":
+        real_sort_order = "desc"
+    elif sort_order == "asc":
+        real_sort_order = "asc"
+
+
     cur = conn.cursor()
     cur.execute("""
-    select distinct on (post_comments.id) body, post_comments.name, post_comments.id, post_comments.reply_depth,
+    select body, post_comments.name, post_comments.id, post_comments.reply_depth,
     post_comments.reply_to, post_comments.votes
-    from post_comments where post_comments.post = %s
-    """, (post_id,))
+    from post_comments where post_comments.post = %s and post_comments.parent is NULL
+    order by {} {}
+    """.format(real_sort_field, real_sort_order), (post_id,))
     new_comments = list(cur.fetchmany(5000))
     replies = []
     if new_comments:
         cur.execute("""
-        select distinct on (post_comments.id) post_comments.body, post_comments.name, post_comments.id, post_comments.reply_depth,         post_comments.reply_to, post_comments.votes
+        select distinct on (post_comments.id) post_comments.body, post_comments.name, post_comments.id, post_comments.reply_depth,
+        post_comments.reply_to, post_comments.votes
         from post_comments join comment_replies on post_comments.id = comment_replies.post
         where comment_replies.parent in %s
         """, (tuple(map(lambda x: x[2], new_comments)),))
@@ -763,9 +851,9 @@ def get_comments(post_id):
 
     new_posts = reorder_posts_by_reply(new_comments + replies)
 
-    return new_comments
+    return new_posts
 
-@app.route("/articles/<pid>", methods=["GET"])
+@app.route("/articles/<pid>", methods=["GET", "POST"])
 def load_comments(pid):
 
     cur = conn.cursor()
@@ -774,9 +862,10 @@ def load_comments(pid):
     """, (pid,))
     post = cur.fetchone()
 
-    posts = get_comments(pid)
+    sort_mode, sort_options = get_sort_mode()
 
-    return render_template("comments.html", posts=posts, post=post, pid=pid)
+    posts = get_comments(pid, sort_mode)
+    return render_template("comments.html", sort_options=sort_options, posts=posts, post=post, pid=pid)
 
 @app.route("/comments/<pid>/<comment>", methods=["POST"])
 def receive_comment(pid, comment):
@@ -841,7 +930,87 @@ tracer = config.initialize_tracer()
 class WorkOutput():
     pass
 
-@app.route("/communities/<cid>/<community_id>", methods=["GET"])
+
+class GetParents(Thread):
+    def __init__(self, span, work_output):
+        super(GetParents, self).__init__()
+        self.span = span
+        self.work_output = work_output
+
+    def run(self):
+        with tracer.start_span('get parents', child_of=self.span) as span:
+            self.work_output.t.start()
+            if len(self.work_output.communities) > 1:
+                self.work_output.exact_posts = get_parent_communities(self.work_output.identikit, self.work_output.exact_posts)
+            self.work_output.t.stop("get parent communities posts")
+
+class GetC(Thread):
+    def __init__(self, span, work_output):
+        super(GetC, self).__init__()
+        self.span = span
+        self.work_output = work_output
+
+    def run(self):
+        with tracer.start_span('get community', child_of=self.span) as span:
+            cur = conn.cursor()
+            cur.execute("""
+            select community from user_communities where id = %s
+            """, (self.work_output.cid,))
+            community = cur.fetchone()
+            span.log_kv({"community": community})
+            self.work_output.t.stop("get community")
+            self.work_output.identikit = community[0]
+
+
+class GetE(Thread):
+    def __init__(self, span, work_output):
+        super(GetE, self).__init__()
+        self.span = span
+        self.work_output = work_output
+
+    def run(self):
+        with tracer.start_span('get exact posts', child_of=self.span) as span:
+            self.work_output.t.start()
+            self.work_output.exact_posts = get_exact_posts(self.work_output.cid, self.work_output.community_id, self.work_output.sort)
+            self.work_output.t.stop("get exact posts")
+
+
+class GetP(Thread):
+    def __init__(self, span, work_output):
+        super(GetP, self).__init__()
+        self.span = span
+        self.work_output = work_output
+
+    def run(self):
+        with tracer.start_span('get partials', child_of=self.span) as span:
+            self.work_output.t.start()
+            self.work_output.posts = get_posts(self.work_output.community_id, self.work_output.communities)
+            self.work_output.t.stop("get partials")
+
+
+
+class GetSimilar(Thread):
+    def __init__(self, span, work_output):
+        super(GetSimilar, self).__init__()
+        self.span = span
+        self.work_output = work_output
+
+    def run(self):
+        with tracer.start_span('get similar', child_of=self.span) as span:
+            self.work_output.similar_communities = get_similar_communities(self.work_output.identikit)
+
+class GetOrCreate(Thread):
+    def __init__(self, span, work_output):
+        super(GetOrCreate, self).__init__()
+        self.span = span
+        self.work_output = work_output
+
+    def run(self):
+        with tracer.start_span('get or create', child_of=self.span) as span:
+            self.work_output.community_link, cid = get_or_create_community(self.work_output.identikit, self.work_output.community_id)
+
+
+@app.route("/communities/<cid>/<community_id>", methods=["GET", "POST"])
 def get_community(cid, community_id):
     def work(cid, community_id):
         work_output = WorkOutput()
@@ -857,50 +1026,15 @@ def get_community(cid, community_id):
             t.start()
             t.start()
 
-            class GetC(Thread):
-                def __init__(self, span):
-                    super(GetC, self).__init__()
-                    self.span = span
-
-                def run(self):
-                    with tracer.start_span('get community', child_of=self.span) as span:
-                        cur = conn.cursor()
-                        cur.execute("""
-                        select community from user_communities where id = %s
-                        """, (cid,))
-                        community = cur.fetchone()
-                        span.log_kv({"community": community})
-                        t.stop("get community")
-                        work_output.identikit = community[0]
-
+            work_output.t = t
+            work_output.cid = cid
+            work_output.community_id = community_id
             work_output.communities = community_id.split(":")
+            work_output.sort = request.form.get("sort", "id-asc")
 
-            class GetP(Thread):
-                def __init__(self, span):
-                    super(GetP, self).__init__()
-                    self.span = span
-                def run(self):
-                    with tracer.start_span('get exact posts', child_of=self.span) as span:
-                        t.start()
-                        work_output.exact_posts = get_exact_posts(cid, community_id)
-                        t.stop("get exact posts")
-
-
-            class GetE(Thread):
-                def __init__(self, span):
-                    super(GetE, self).__init__()
-                    self.span = span
-
-                def run(self):
-                    with tracer.start_span('get partials', child_of=self.span) as span:
-                        t.start()
-                        work_output.posts = get_posts(community_id, work_output.communities)
-                        t.stop("get partials")
-
-
-            get_c = GetC(span)
-            get_e = GetE(span)
-            get_p = GetP(span)
+            get_c = GetC(span, work_output)
+            get_e = GetE(span, work_output)
+            get_p = GetP(span, work_output)
 
             get_c.start()
             get_e.start()
@@ -910,25 +1044,26 @@ def get_community(cid, community_id):
             get_e.join()
             get_p.join()
 
+            get_parents = GetParents(span, work_output)
+            get_similar = GetSimilar(span, work_output)
+            get_or_create = GetOrCreate(span, work_output)
+
+            get_parents.start()
+            get_similar.start()
+            get_or_create.start()
+
+            get_parents.join()
+            get_similar.join()
+            get_or_create.join()
+
             work_output.receiver_list = work_output.identikit.split(" ")
-
-            with tracer.start_span('get parents', child_of=span) as span:
-                t.start()
-                if len(work_output.communities) > 1:
-                    work_output.exact_posts = get_parent_communities(work_output.identikit, work_output.exact_posts)
-                t.stop("get parent communities posts")
-
-            with tracer.start_span('get similar', child_of=span) as span:
-                work_output.similar_communities = get_similar_communities(work_output.identikit)
-
-            with tracer.start_span('get or create', child_of=span) as span:
-                work_output.community_link, cid = get_or_create_community(work_output.identikit, community_id)
 
             t.stop("whole thing")
             return work_output
 
     work_output = work(cid, community_id)
-    return render_template("results.html", cid=work_output.cid, community_link=work_output.community_link, similar_communities=work_output.similar_communities, receiver_list=work_output.receiver_list, exact_posts=work_output.exact_posts, posts=work_output.posts, community_id=work_output.community_id, signed_in=work_output.signed_in, user_email=work_output.user_email, community_lookup=work_output.identikit, timers=work_output.t.timers)
+    sort_mode, sort_options = get_sort_mode()
+    return render_template("results.html", sort_options=sort_options, cid=work_output.cid, community_link=work_output.community_link, similar_communities=work_output.similar_communities, receiver_list=work_output.receiver_list, exact_posts=work_output.exact_posts, posts=work_output.posts, community_id=work_output.community_id, signed_in=work_output.signed_in, user_email=work_output.user_email, community_lookup=work_output.identikit, timers=work_output.t.timers)
 
 admin_pass = os.environ["admin_pass"].strip()
 
@@ -981,12 +1116,21 @@ def delete_post(id):
 @app.route("/upvote/<id>/<cid>/<community>", methods=["POST"])
 def upvote_post(id, cid, community):
 
+    return_page = request.args.get("returnpage")
+
     cur = conn.cursor()
-    categories = cur.execute("""
-    select ip, post from post_votes where id = %s and ip = %s
-    """, (id, request.remote_addr))
+    statement = """
+    select ip, post from post_votes where post = %s and ip = %s
+    """
+    print(cur.mogrify(statement, (id, request.remote_addr)))
+    categories = cur.execute(statement, (id, request.remote_addr))
     voter_record = cur.fetchone()
 
+    c = Cache()
+    c.invalidate_dependents("community_posts_{}".format(cid))
+
+    r.delete("posts_{}".format(cid))
+    print(voter_record)
     if voter_record == None:
         cur = conn.cursor()
         categories = cur.execute("""
@@ -1008,6 +1152,9 @@ def upvote_post(id, cid, community):
         insert into post_votes (ip, post) values (%s, %s)
         """, (request.remote_addr, id,))
         conn.commit()
+
+    if return_page == "top":
+        return redirect("/")
 
     return redirect("/communities/{}/{}".format(cid, community))
 
@@ -1057,14 +1204,16 @@ def post_message():
     community_id = identikit_to_hash(identikit)
     cid = request.form["cid"]
 
-    redis_key = "community_posts_" + cid
-    print("Deleting key " + redis_key)
-    r.delete(redis_key)
-
     # need to invalidate caches for each community that we are posting
     c = Cache()
     for community_hash in community_id.split(":"):
         c.invalidate_dependents(community_hash)
+
+    redis_key = "community_posts_" + cid
+    c.invalidate_dependents(redis_key)
+
+    print("Deleting key " + redis_key)
+    r.delete(redis_key)
 
     hashed = community_id.split(":")
     if hashed == [""]:
@@ -1308,8 +1457,11 @@ def questionnaire_to_community():
     community_id = identikit_to_hash(identikit)
     hashed = community_id.split(":")
 
+    sort_mode, sort_options = get_sort_mode()
+
+
     community_link, cid = get_or_create_community(identikit, community_id)
-    exact_posts = get_exact_posts(cid, community_id)
+    exact_posts = get_exact_posts(cid, community_id, sort_mode)
     posts = get_posts(community_id, hashed)
 
     if len(hashed) > 1:
@@ -1317,7 +1469,7 @@ def questionnaire_to_community():
     receiver_list = identikit.split(" ")
 
     similar_communities = get_similar_communities(identikit)
-    return render_template("results.html", cid=cid, similar_communities=similar_communities, receiver_list=receiver_list, community_link=community_link, exact_posts=exact_posts, posts=posts, community_id=community_id, signed_in=signed_in, user_email=user_email, community_lookup=identikit)
+    return render_template("results.html", sort_options=sort_options, cid=cid, similar_communities=similar_communities, receiver_list=receiver_list, community_link=community_link, exact_posts=exact_posts, posts=posts, community_id=community_id, signed_in=signed_in, user_email=user_email, community_lookup=identikit)
 
 if __name__ == "__main__":
     app.run(port=80)

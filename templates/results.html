@@ -13,8 +13,15 @@
 
 <h1>Exact community matches</h1>
 
-<ol>
+<form method="post" action="/communities/{{cid}}/{{ community_id }}">
+<input name="identikit" type="hidden" value="{{ community_lookup }}"/>
+    <select name="sort">
+        {% for sort_option in sort_options %}
+        <option value="{{ sort_option[0] }}" {% if sort_option[2] %}selected{% endif %}>{{ sort_option[1] }}</option>
+        {% endfor %}
+</select><button type="submit">Sort</button></form>
 
+<ol>
 {% for post in exact_posts %}
 <div>
 <div>

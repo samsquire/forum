@@ -10,6 +10,14 @@
 </span>
 </div>
 
+<form method="post" action="/articles/{{pid}}">
+<input name="identikit" type="hidden" value="{{ community_lookup }}"/>
+    <select name="sort">
+        {% for sort_option in sort_options %}
+        <option value="{{ sort_option[0] }}" {% if sort_option[2] %}selected{% endif %}>{{ sort_option[1] }}</option>
+        {% endfor %}
+</select><button type="submit">Sort</button></form>
+
 {% for post in posts %}
 <div style="position: relative; left: {{ post[3] * 15 }}px">
 <div style="color: #838383; font-size; 16pt">{{ post[1] }} {{ post[5] }}pts <a href="/reply/{{ pid }}/{{ post[2] }}">reply</a>

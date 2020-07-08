@@ -1,0 +1,26 @@
+{% extends "page.html" %}
+{% block content %}
+
+{% include "form_lookup.html" %}
+
+<hr>
+
+<ol>
+{% for post in posts %}
+<div>
+<div>
+    <form  style="display: inline" method="post" action="/upvote/{{ post[2] }}/{{ post[6] }}/{{ post[4] }}?returnpage=top">
+
+    <button style="display: inline">^</button>
+    </form>
+    <a href="/articles/{{ post[2] }}">{{ post[0] }}</a><span style="color: #838383; font-size; 16pt">{{ post[1] }} {{ post[7] }}pts</span>
+</div>
+
+</div>
+{% endfor %}
+
+</ol>
+
+{% include "timers.html" %}
+
+{% endblock %}
