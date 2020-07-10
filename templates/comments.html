@@ -1,7 +1,7 @@
 {% extends "page.html" %}
 {% block content %}
 
-<ol>
+
 
 <div>
 <span style="color: grey; font-size; 16pt">{{ post[2] }}pts</span> {{ post[0] }}
@@ -10,7 +10,7 @@
 </span>
 </div>
 
-<form method="post" action="/articles/{{pid}}">
+<form method="post" action="http://api.lonely-people.com/articles/{{pid}}">
 <input name="identikit" type="hidden" value="{{ community_lookup }}"/>
     <select name="sort">
         {% for sort_option in sort_options %}
@@ -21,7 +21,7 @@
 {% for post in posts %}
 <div style="position: relative; left: {{ post[3] * 15 }}px">
 <div style="color: #838383; font-size; 16pt">{{ post[1] }} {{ post[5] }}pts <a href="/reply/{{ pid }}/{{ post[2] }}">reply</a>
-    <form  style="display: inline" method="post" action="/comment-upvote/{{ pid }}/{{ post[2] }}">
+    <form  style="display: inline" method="post" action="http://api.lonely-people.com/comment-upvote/{{ pid }}/{{ post[2] }}">
 
     <button style="display: inline">^</button>
     </form>
@@ -30,13 +30,11 @@
 </div>
 {% endfor %}
 
-</ol>
-
 
 <h1>Send message to community</h1>
 Type your message below.
 
-<form method="post" action="/comments/{{ pid }}/new">
+<form method="post" action="http://api.lonely-people.com/comments/{{ pid }}/new">
         <div>
             <div>Reply:</div>
             <textarea name="message" placeholder="Type a message" style="width: 400px; height: 300px"></textarea>

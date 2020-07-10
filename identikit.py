@@ -18,18 +18,27 @@ import pickle
 import time
 import asyncio
 from threading import Thread
+from subprocess import Popen
+import random
 
 from jaeger_client import Config
 
 
 try:
     conn = psycopg2.connect("dbname='forum' user='forum' host='172.17.0.1' password='forum'")
+    conn.autocommit = True
     print(conn)
 except Exception as e:
     print("I am unable to connect to the database")
     print(e)
 
 r = redis.Redis(host='localhost', port=6379, db=0)
+
+def regenerate_site():
+    path = os.path.abspath("identikit.py")
+    regenerate = Popen(["python3", path], env={"admin_pass": "blah", "HOME": os.environ["HOME"], "USER": os.environ["USER"]})
+    regenerate.communicate()
+    regenerate.wait()
 
 def check_signed_in(from_cookie=False):
     email = None
@@ -401,10 +410,10 @@ def get_top_posts():
     identikit_community_posting.community,
     identikit_posts.reply_to, identikit_community_posting.cid, identikit_posts.votes, identikit_posts.parent, identikit_community_posting.cid
     from identikit_posts join identikit_community_posting on identikit_posts.id = identikit_community_posting.post
-    where identikit_posts.votes > 3
+    where identikit_posts.votes >= 3
     order by identikit_posts.votes desc, identikit_posts.id desc
     """.format()
-    print(statement)
+
     cur.execute(statement, ())
     new_posts = list(cur.fetchmany(5000))
     seen = {}
@@ -417,19 +426,21 @@ def get_top_posts():
 
     return posts
 
-
 @app.route("/", methods=["GET"])
+def get_root():
+    return redirect("/identikit")
+
+@app.route("/top", methods=["GET"])
 def homepage():
     top_posts = get_top_posts()
-    return render_template("top.html", posts=top_posts)
+    identikit = "#PoliticalSide:Left_wing #Government:Small #Taxes:Small #VoluntaryCollectivism:Yes #UniversalBasicIncome:yes"
+    return render_template("top.html", community_lookup=identikit, posts=top_posts)
 
 @app.route("/identikit", methods=["GET"])
 def lookup():
     signed_in, username, user_email, email_token, login_token = check_signed_in()
 
     identikit = "#PoliticalSide:Left_wing #Government:Small #Taxes:Small #VoluntaryCollectivism:Yes #UniversalBasicIncome:yes"
-    if session.get("identikit"):
-        identikit = session["identikit"]
 
     return render_template("lookup.html", signed_in=signed_in, user_email=user_email, community_lookup=identikit)
 
@@ -566,7 +577,7 @@ def get_parent_post(table, start):
 
     return post[0]
 
-@app.route("/reply/<id>/<cid>/<community>", methods=["POST"])
+@app.route("/reply/<id>/<cid>", methods=["POST"])
 def submit_reply(id, cid, community):
     cur = conn.cursor()
     cur.execute("""
@@ -606,7 +617,7 @@ def submit_reply(id, cid, community):
 
     conn.commit()
 
-    return redirect("/communities/{}/{}".format(cid, community))
+    return redirect("http://lonely-people.com/communities/{}".format(cid))
 
 def get_sort_options():
     return [
@@ -616,13 +627,15 @@ def get_sort_options():
     ("votes-desc", "Highest first", False)
     ]
 
-def get_sort_mode():
-    if session.get("sort") and request.form.get("sort") == None:
-        sort_mode = session["sort"]
-    else:
-        sort_mode = request.form.get("sort", "id-asc")
-        session["sort"] = sort_mode
+#
+#     if session.get("sort") and request.form.get("sort") == None:
+    #     sort_mode = session["sort"]
+    # else:
+    #     sort_mode = request.form.get("sort", "id-asc")
+    #     session["sort"] = sort_mode
 
+
+def get_sort_mode(sort_mode):
     def update_sort(sort_option):
         if sort_option[0] == sort_mode:
             return (sort_option[0], sort_option[1], True)
@@ -640,26 +653,9 @@ def find_communities():
     session["identikit"] = data
     community_id = identikit_to_hash(data)
     hashed = community_id.split(":")
-
-    similar_communities = get_similar_communities(data)
-
     community_link, cid = get_or_create_community(data, community_id)
 
-    sort_mode, sort_options = get_sort_mode()
-
-    print(sort_mode)
-    exact_posts = get_exact_posts(cid, community_id, sort_mode)
-    print(exact_posts)
-
-    posts = get_posts(community_id, hashed)
-
-    if len(hashed) > 1:
-        exact_posts = get_parent_communities(data, exact_posts)
-
-    receiver_list = data.split(" ")
-
-    return render_template("results.html", cid=cid, similar_communities=similar_communities, receiver_list=receiver_list, community_link=community_link, exact_posts=exact_posts,
-    posts=posts, community_id=community_id, signed_in=signed_in, user_email=user_email, community_lookup=data, sort_options=sort_options)
+    return redirect("http://lonely-people.com/communities/" + str(cid))
 
 def get_or_create_community(identikit, community_id):
     cur = conn.cursor()
@@ -670,7 +666,7 @@ def get_or_create_community(identikit, community_id):
 
     if duplicate:
         cid = duplicate[1]
-        community_link = "/communities/{}/{}".format(cid, community_id)
+        community_link = "/communities/{}".format(cid)
     else:
         cur = conn.cursor()
         categories = cur.execute("""
@@ -678,17 +674,16 @@ def get_or_create_community(identikit, community_id):
         """, (identikit, session.get("name", "Anonymous"), ))
         new_community = cur.fetchone()
         cid = new_community[0]
-        community_link = "/communities/{}/{}".format(cid, community_id)
+        community_link = "/communities/{}".format(cid)
         conn.commit()
         r.delete("all_communities")
     return community_link, cid
 
 def get_exact_posts(cid, community_id, sort="votes-desc"):
     redis_key = "community_posts_{}_{}".format(cid, sort)
-    print(redis_key)
+
     c = Cache(redis_key)
     if c.exists():
-        print("Sort mode exists")
         new_posts = c.lookup()
         return new_posts
     else:
@@ -711,7 +706,7 @@ def get_exact_posts(cid, community_id, sort="votes-desc"):
         from identikit_posts join identikit_community_posting on identikit_posts.id = identikit_community_posting.post where identikit_community_posting.community = %s
         order by {} {}
         """.format(real_sort_field, real_sort_order)
-        print(statement)
+
         cur.execute(statement, (community_id,))
         new_posts = list(cur.fetchmany(5000))
 
@@ -750,7 +745,7 @@ def append_children(post, added, index, child_posts):
     return returned_posts
 
 def reorder_posts_by_reply(posts):
-    print(posts)
+
     returned_posts = []
     index = {}
     child_posts = defaultdict(list)
@@ -758,7 +753,7 @@ def reorder_posts_by_reply(posts):
         index[post[ID]] = post
         child_posts[post[REPLY_TO]].append(post[ID])
 
-    pprint(child_posts)
+
     added = []
     returned_posts = []
     for post in posts:
@@ -766,7 +761,6 @@ def reorder_posts_by_reply(posts):
             added.append(post[ID])
             returned_posts.append(index[post[ID]])
             returned_posts = returned_posts + append_children(post, added, index, child_posts)
-            print(returned_posts)
     return returned_posts
 
 class Cache():
@@ -839,6 +833,7 @@ def get_comments(post_id, sort):
     order by {} {}
     """.format(real_sort_field, real_sort_order), (post_id,))
     new_comments = list(cur.fetchmany(5000))
+
     replies = []
     if new_comments:
         cur.execute("""
@@ -854,15 +849,19 @@ def get_comments(post_id, sort):
     return new_posts
 
 @app.route("/articles/<pid>", methods=["GET", "POST"])
-def load_comments(pid):
+def load_comments_nosort(pid):
+    sort = request.form.get("sort", "id-asc")
+    return redirect("http://lonely-people.com/articles/{}/{}".format(pid, sort))
 
+@app.route("/articles/<pid>/<sort>", methods=["GET", "POST"])
+def load_comments(pid, sort):
     cur = conn.cursor()
     cur.execute("""
     select body, name, votes from identikit_posts where id = %s
     """, (pid,))
     post = cur.fetchone()
 
-    sort_mode, sort_options = get_sort_mode()
+    sort_mode, sort_options = get_sort_mode(sort)
 
     posts = get_comments(pid, sort_mode)
     return render_template("comments.html", sort_options=sort_options, posts=posts, post=post, pid=pid)
@@ -890,6 +889,7 @@ def receive_comment(pid, comment):
     insert into post_comments (body, reply_depth, reply_to, name, votes, parent, post) values (%s, %s, %s, %s, %s, %s, %s) returning id
     """, (request.form["message"], reply_depth, reply_to, session.get("name", "Anonymous"), 0, parent_post, pid,))
     reply_post = list(cur.fetchone())
+    conn.commit()
 
     cur = conn.cursor()
     cur.execute("""
@@ -898,8 +898,9 @@ def receive_comment(pid, comment):
     post_replies_response = list(cur.fetchone())
 
     conn.commit()
+    regenerate_site()
 
-    return redirect("/articles/{}".format(pid))
+    return redirect("http://lonely-people.com/articles/{}".format(pid))
 
 class Timer():
     def __init__(self):
@@ -960,6 +961,8 @@ class GetC(Thread):
             span.log_kv({"community": community})
             self.work_output.t.stop("get community")
             self.work_output.identikit = community[0]
+            self.work_output.community_id = identikit_to_hash(community[0])
+            self.work_output.communities = self.work_output.community_id.split(":")
 
 
 class GetE(Thread):
@@ -1009,13 +1012,17 @@ class GetOrCreate(Thread):
         with tracer.start_span('get or create', child_of=self.span) as span:
             self.work_output.community_link, cid = get_or_create_community(self.work_output.identikit, self.work_output.community_id)
 
+@app.route("/communities/<cid>/", methods=["GET", "POST"])
+def get_community_nosort(cid):
+    sort = request.form.get("sort", "id-asc")
+    return redirect("http://lonely-people.com/communities/{}/{}".format(cid, sort))
 
-@app.route("/communities/<cid>/<community_id>", methods=["GET", "POST"])
-def get_community(cid, community_id):
-    def work(cid, community_id):
+@app.route("/communities/<cid>/<sort>/", methods=["GET", "POST"])
+def get_community(cid, sort):
+    def work(cid):
         work_output = WorkOutput()
         work_output.cid = cid
-        work_output.community_id = community_id
+
         with tracer.start_span('communities') as span:
             signed_in, username, user_email, email_token, login_token = check_signed_in()
             work_output.signed_in = signed_in
@@ -1028,19 +1035,19 @@ def get_community(cid, community_id):
 
             work_output.t = t
             work_output.cid = cid
-            work_output.community_id = community_id
-            work_output.communities = community_id.split(":")
-            work_output.sort = request.form.get("sort", "id-asc")
+            work_output.sort = sort
 
             get_c = GetC(span, work_output)
+            get_c.start()
+            get_c.join()
+
             get_e = GetE(span, work_output)
             get_p = GetP(span, work_output)
 
-            get_c.start()
             get_e.start()
             get_p.start()
 
-            get_c.join()
+
             get_e.join()
             get_p.join()
 
@@ -1061,9 +1068,12 @@ def get_community(cid, community_id):
             t.stop("whole thing")
             return work_output
 
-    work_output = work(cid, community_id)
-    sort_mode, sort_options = get_sort_mode()
-    return render_template("results.html", sort_options=sort_options, cid=work_output.cid, community_link=work_output.community_link, similar_communities=work_output.similar_communities, receiver_list=work_output.receiver_list, exact_posts=work_output.exact_posts, posts=work_output.posts, community_id=work_output.community_id, signed_in=work_output.signed_in, user_email=work_output.user_email, community_lookup=work_output.identikit, timers=work_output.t.timers)
+    work_output = work(cid)
+    sort_mode, sort_options = get_sort_mode(sort)
+    return render_template("results.html", sort_options=sort_options, cid=work_output.cid, community_link=work_output.community_link,
+    similar_communities=work_output.similar_communities, receiver_list=work_output.receiver_list, exact_posts=work_output.exact_posts,
+    posts=work_output.posts, community_id=work_output.community_id, signed_in=work_output.signed_in, user_email=work_output.user_email,
+    community_lookup=work_output.identikit, timers=work_output.t.timers)
 
 admin_pass = os.environ["admin_pass"].strip()
 
@@ -1152,11 +1162,11 @@ def upvote_post(id, cid, community):
         insert into post_votes (ip, post) values (%s, %s)
         """, (request.remote_addr, id,))
         conn.commit()
-
+        regenerate_site()
     if return_page == "top":
         return redirect("/")
 
-    return redirect("/communities/{}/{}".format(cid, community))
+    return redirect("http://lonely-people.com/communities/{}".format(cid))
 
 @app.route("/comment-upvote/<pid>/<comment>", methods=["POST"])
 def upvote_comment(pid, comment):
@@ -1188,7 +1198,7 @@ def upvote_comment(pid, comment):
         insert into comment_votes (ip, post) values (%s, %s)
         """, (request.remote_addr, comment,))
         conn.commit()
-
+        regenerate_site()
     return redirect("/articles/{}".format(pid))
 
 
@@ -1250,8 +1260,9 @@ def post_message():
     print("Saved exact post as", community_post_id)
 
     conn.commit()
+    regenerate_site()
 
-    return redirect("communities/{}/{}".format(request.form["cid"], request.form["community_id"]))
+    return redirect("http://lonely-people.com/communities/{}/".format(request.form["cid"]))
 
 class Question():
     def __init__(self, id, short, text, answers):
@@ -1343,6 +1354,7 @@ def add_question(id):
         question_id = ""
         answer_list = []
         in_edit_mode = False
+        question_number = "new"
     else:
         cur = conn.cursor()
         cur.execute("""
@@ -1362,8 +1374,9 @@ def add_question(id):
         for answer in answers:
             answer_list.append(Answer(answer[0], answer[1]))
         in_edit_mode = True
+        question_number = id
 
-    return render_template("add.html", id=id, in_edit_mode=in_edit_mode, question_id=question_id, question_text=question_text, answers=answer_list, signed_in=signed_in, user_email=user_email)
+    return render_template("add.html", question_number=question_number, id=id, in_edit_mode=in_edit_mode, question_id=question_id, question_text=question_text, answers=answer_list, signed_in=signed_in, user_email=user_email)
 
 
 @app.route("/add/<id>", methods=["POST"])
@@ -1382,37 +1395,40 @@ def submit_question(id):
         """, (request.form["question_id"], request.form["question_text"], id,))
         created_id = list(cur.fetchone())
 
-
     print(created_id)
     conn.commit()
-    return redirect("/add/{}".format(created_id[0]))
+    regenerate_site()
+    return redirect("http://lonely-people.com/add/{}".format(created_id[0]))
 
 @app.route("/questions/<qid>/<id>", methods=["GET"])
 def view_question(qid, id):
     signed_in, username, user_email, email_token, login_token = check_signed_in()
+
+    cur = conn.cursor()
+    categories = cur.execute("""
+    select id from questions where id = %s
+    """, (qid,))
+    question = cur.fetchone()
+    question_id = question[0]
+
     if id == "new":
         answer_text = ""
         in_edit_mode = False
-        question_id = 0
         answer_id = 0
+        answer_number = "new"
     else:
         cur = conn.cursor()
         categories = cur.execute("""
-        select id from questions where id = %s
-        """, (qid,))
-        question = list(cur.fetchone())
-        question_id = question[0]
-
-        cur = conn.cursor()
-        categories = cur.execute("""
-        select answer, id from answers where question = %s
-        """, (qid,))
-        answer = list(cur.fetchone())
+        select answer, id from answers where question = %s and id = %s
+        """, (qid, id,))
+        answer = cur.fetchone()
         answer_text = answer[0]
         answer_id = answer[1]
         in_edit_mode = True
+        answer_number = answer_id
 
-    return render_template("answer.html", in_edit_mode=in_edit_mode, qid=question_id, id=answer_id, answer_text=answer_text, signed_in=signed_in, user_email=user_email)
+    return render_template("answer.html", answer_number=answer_number, in_edit_mode=in_edit_mode, qid=question_id,
+    id=answer_id, answer_text=answer_text, signed_in=signed_in, user_email=user_email)
 
 @app.route("/questions/<qid>/<id>", methods=["POST"])
 def save_question(qid, id):
@@ -1433,7 +1449,8 @@ def save_question(qid, id):
         answer_text = answer[0]
 
     conn.commit()
-    return redirect("/add/{}".format(qid))
+    regenerate_site()
+    return redirect("http://lonely-people.com/add/{}".format(qid))
 
 @app.route("/delete_answer/<qid>/<id>", methods=["POST"])
 def delete_answer(qid, id):
@@ -1457,7 +1474,7 @@ def questionnaire_to_community():
     community_id = identikit_to_hash(identikit)
     hashed = community_id.split(":")
 
-    sort_mode, sort_options = get_sort_mode()
+    sort_mode, sort_options = get_sort_mode("id-asc")
 
 
     community_link, cid = get_or_create_community(identikit, community_id)
@@ -1469,7 +1486,177 @@ def questionnaire_to_community():
     receiver_list = identikit.split(" ")
 
     similar_communities = get_similar_communities(identikit)
-    return render_template("results.html", sort_options=sort_options, cid=cid, similar_communities=similar_communities, receiver_list=receiver_list, community_link=community_link, exact_posts=exact_posts, posts=posts, community_id=community_id, signed_in=signed_in, user_email=user_email, community_lookup=identikit)
+    regenerate_site()
+    return redirect("http://lonely-people.com/communities/{}".format(cid))
+
+import os, pwd, grp
+
+def drop_privileges(uid_name='nobody', gid_name='nogroup'):
+    if os.getuid() != 0:
+        # We're not root so, like, whatever dude
+        return
+
+    # Get the uid/gid from the name
+    running_uid = pwd.getpwnam(uid_name).pw_uid
+    running_gid = grp.getgrnam(gid_name).gr_gid
+
+    # Remove group privileges
+    os.setgroups([])
+
+    # Try setting the new uid/gid
+    os.setgid(running_gid)
+    os.setuid(running_uid)
+
+    # Ensure a very conservative umask
+    os.umask(0o22)
 
 if __name__ == "__main__":
-    app.run(port=80)
+    import requests
+    gen_user = os.environ.get("GEN_USER", "sam")
+    print("Dropping rights to {}".format(gen_user))
+    drop_privileges(uid_name=gen_user)
+
+    cur = conn.cursor()
+    categories = cur.execute("""
+    select id, community from user_communities
+    """, (id))
+    conn.commit()
+    communities = cur.fetchmany(5000)
+
+    for cid, identikit in communities:
+        print("{} {}".format(cid, identikit))
+        sort_options = get_sort_options()
+        url = 'http://localhost:85/communities/{}/id-asc'.format(cid)
+        print(url)
+        response = requests.get(url)
+        try:
+            os.makedirs("site/communities/{}/".format(cid))
+        except:
+            pass
+        print(response.status_code)
+        if response.status_code != 200 and response.status_code != 301:
+            print("error")
+            break
+        #print(response.content)
+        open("site/communities/{}/index.html".format(cid), "w").write(response.content.decode('utf-8'))
+
+        for sort_option in sort_options:
+            response = requests.get('http://localhost:85/communities/{}/{}'.format(cid, sort_option[0]))
+            try:
+                os.makedirs("site/communities/{}/{}".format(cid, sort_option[0]))
+            except:
+                pass
+            #print(response.content)
+            open("site/communities/{}/{}/index.html".format(cid, sort_option[0]), "w").write(response.content.decode('utf-8'))
+
+    cur = conn.cursor()
+    categories = cur.execute("""
+    select id from identikit_posts
+    """, (id))
+    conn.commit()
+    posts = cur.fetchmany(5000)
+
+
+
+    for post in posts:
+        post_id = post[0]
+
+        response = requests.get('http://localhost:85/articles/{}/id-asc'.format(post_id))
+        try:
+            os.makedirs("site/articles/{}".format(post_id))
+        except:
+            pass
+        # print(response.content.decode('utf-8'))
+        open("site/articles/{}/index.html".format(post_id), "w").write(response.content.decode('utf-8'))
+
+        for sort_option in sort_options:
+            response = requests.get('http://localhost:85/articles/{}/{}'.format(post_id, sort_option[0]))
+            try:
+                os.makedirs("site/articles/{}/{}".format(post_id, sort_option[0]))
+            except:
+                pass
+            #print(response.content)
+            open("site/articles/{}/{}/index.html".format(post_id, sort_option[0]), "w").write(response.content.decode('utf-8'))
+
+
+    response = requests.get('http://localhost:85/'.format())
+    open("site/index.html", "w").write(response.content.decode('utf-8'))
+
+    response = requests.get('http://localhost:85/identikit'.format())
+    try:
+        os.makedirs("site/identikit".format())
+    except:
+        pass
+    open("site/identikit/index.html", "w").write(response.content.decode('utf-8'))
+
+
+
+    response = requests.get('http://localhost:85/top'.format())
+    try:
+        os.makedirs("site/top".format())
+    except:
+        pass
+    open("site/top/index.html", "w").write(response.content.decode('utf-8'))
+
+
+
+    response = requests.get('http://localhost:85/questionnaire'.format())
+    try:
+        os.makedirs("site/questionnaire".format())
+    except:
+        pass
+    open("site/questionnaire/index.html", "w").write(response.content.decode('utf-8'))
+
+    response = requests.get('http://localhost:85/add/new'.format())
+    try:
+        os.makedirs("site/add/new".format())
+    except:
+        pass
+    open("site/add/new/index.html", "w").write(response.content.decode('utf-8'))
+
+    response = requests.get('http://localhost:85/view'.format())
+    try:
+        os.makedirs("site/view".format())
+    except:
+        pass
+    open("site/view/index.html", "w").write(response.content.decode('utf-8'))
+    print("Site regen done")
+
+    cur = conn.cursor()
+    categories = cur.execute("""
+    select id from questions
+    """, (id))
+    conn.commit()
+    questions = cur.fetchmany(5000)
+
+    for question in questions:
+        question_id = question[0]
+        response = requests.get('http://localhost:85/add/{}'.format(question_id))
+        try:
+            os.makedirs("site/add/{}".format(question_id))
+        except:
+            pass
+        open("site/add/{}/index.html".format(question_id), "w").write(response.content.decode('utf-8'))
+
+        response = requests.get('http://localhost:85/questions/{}/new'.format(question_id))
+        try:
+            os.makedirs("site/questions/{}/new".format(question_id))
+        except:
+            pass
+        open("site/questions/{}/new/index.html".format(question_id), "w").write(response.content.decode('utf-8'))
+
+        cur = conn.cursor()
+        categories = cur.execute("""
+        select id from answers where question = %s
+        """, (question_id,))
+        conn.commit()
+        answers = cur.fetchmany(5000)
+
+        for answer in answers:
+            answer_id = answer[0]
+            response = requests.get('http://localhost:85/questions/{}/{}'.format(question_id, answer_id))
+            try:
+                os.makedirs("site/questions/{}/{}".format(question_id, answer_id))
+            except:
+                pass
+            open("site/questions/{}/{}/index.html".format(question_id, answer_id), "w").write(response.content.decode('utf-8'))

@@ -13,7 +13,7 @@
 
 <h1>Exact community matches</h1>
 
-<form method="post" action="/communities/{{cid}}/{{ community_id }}">
+<form method="post" action="http://api.lonely-people.com/communities/{{cid}}">
 <input name="identikit" type="hidden" value="{{ community_lookup }}"/>
     <select name="sort">
         {% for sort_option in sort_options %}
@@ -25,7 +25,7 @@
 {% for post in exact_posts %}
 <div>
 <div>
-    <form  style="display: inline" method="post" action="/upvote/{{ post[2] }}/{{ post[6] }}/{{ post[4] }}">
+    <form  style="display: inline" method="post" action="http://api.lonely-people.com/upvote/{{ post[2] }}/{{ post[6] }}/{{ post[4] }}">
 
     <button style="display: inline">^</button>
     </form>
@@ -43,7 +43,7 @@
 {% for post in posts %}
 <div>
 <div>
-    <form  style="display: inline" method="post" action="/upvote/{{ post[2] }}/{{ post[6] }}/{{ post[4] }}">
+    <form  style="display: inline" method="post" action="http://api.lonely-people.com/upvote/{{ post[2] }}/{{ post[6] }}/{{ post[4] }}">
 
     <button style="display: inline">^</button>
     </form>
@@ -56,7 +56,7 @@
 
 <h1>Send message to community</h1>
 Type your message below. Your message will be delivered to the community in the box above <i>plus</i> any you select on the right hand side. You don't need to select any communities on the right hand side to send to your selected community above.
-<form method="post" action="/post">
+<form method="post" action="http://api.lonely-people.com/post">
     <input name="cid" type="hidden" value="{{ cid }}"/>
     <input name="community_id" type="hidden" value="{{ community_id }}"/>
 
@@ -84,7 +84,7 @@ Type your message below. Your message will be delivered to the community in the 
 <ol>
 {% for similar_community in similar_communities %}
 <li><b>{{ similar_community[1] * 100 }}%</b> {{ similar_community[0] }}
-    <form action="/identikit" method="post">
+    <form action="http://api.lonely-people.com/identikit" method="post">
     <input type="hidden" name="identikit" value="{{ similar_community[0] }}"/>
     <button type="submit">Go</button>
     </form>
