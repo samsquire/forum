@@ -1512,6 +1512,33 @@ def drop_privileges(uid_name='nobody', gid_name='nogroup'):
 
 if __name__ == "__main__":
     import requests
+    delete = Popen(["rm", "-rf", "site"])
+    delete.communicate()
+    delete.wait()
+
+    def save_url(url, override_path=None):
+        beginning, path = url.split("http://localhost:85/")
+        try:
+            os.makedirs("site/{}".format(path))
+        except:
+            pass
+        print("Saving {}".format(path))
+        response = requests.get(url)
+        print(response.status_code)
+        if response.status_code != 200 and response.status_code != 301:
+            print("error")
+        path = "site/{}/index.html".format(path)
+        if override_path:
+            path = "site/" + override_path + "/index.html"
+        open(path, "w").write(response.content.decode('utf-8'))
+
+
+    from argparse import ArgumentParser
+    parser = ArgumentParser()
+    parser.add_argument("--path")
+    args = parser.parse_args()
+    requested_url = args.path
+
     gen_user = os.environ.get("GEN_USER", "sam")
     print("Dropping rights to {}".format(gen_user))
     drop_privileges(uid_name=gen_user)
@@ -1523,22 +1550,13 @@ if __name__ == "__main__":
     conn.commit()
     communities = cur.fetchmany(5000)
 
+
+
     for cid, identikit in communities:
-        print("{} {}".format(cid, identikit))
         sort_options = get_sort_options()
         url = 'http://localhost:85/communities/{}/id-asc'.format(cid)
-        print(url)
-        response = requests.get(url)
-        try:
-            os.makedirs("site/communities/{}/".format(cid))
-        except:
-            pass
-        print(response.status_code)
-        if response.status_code != 200 and response.status_code != 301:
-            print("error")
-            break
-        #print(response.content)
-        open("site/communities/{}/index.html".format(cid), "w").write(response.content.decode('utf-8'))
+
+        save_url(url, override_path="communities/{}".format(cid))
 
         for sort_option in sort_options:
             response = requests.get('http://localhost:85/communities/{}/{}'.format(cid, sort_option[0]))
@@ -1556,18 +1574,10 @@ if __name__ == "__main__":
     conn.commit()
     posts = cur.fetchmany(5000)
 
-
-
     for post in posts:
         post_id = post[0]
 
-        response = requests.get('http://localhost:85/articles/{}/id-asc'.format(post_id))
-        try:
-            os.makedirs("site/articles/{}".format(post_id))
-        except:
-            pass
-        # print(response.content.decode('utf-8'))
-        open("site/articles/{}/index.html".format(post_id), "w").write(response.content.decode('utf-8'))
+        save_url('http://localhost:85/articles/{}/id-asc'.format(post_id), override_path="articles/{}".format(post_id))
 
         for sort_option in sort_options:
             response = requests.get('http://localhost:85/articles/{}/{}'.format(post_id, sort_option[0]))
@@ -1582,45 +1592,16 @@ if __name__ == "__main__":
     response = requests.get('http://localhost:85/'.format())
     open("site/index.html", "w").write(response.content.decode('utf-8'))
 
-    response = requests.get('http://localhost:85/identikit'.format())
-    try:
-        os.makedirs("site/identikit".format())
-    except:
-        pass
-    open("site/identikit/index.html", "w").write(response.content.decode('utf-8'))
+    save_url('http://localhost:85/identikit'.format())
+    save_url('http://localhost:85/top'.format())
+
+    save_url('http://localhost:85/questionnaire')
+
+    save_url('http://localhost:85/add/new'.format())
+
+    save_url('http://localhost:85/view'.format())
 
 
-
-    response = requests.get('http://localhost:85/top'.format())
-    try:
-        os.makedirs("site/top".format())
-    except:
-        pass
-    open("site/top/index.html", "w").write(response.content.decode('utf-8'))
-
-
-
-    response = requests.get('http://localhost:85/questionnaire'.format())
-    try:
-        os.makedirs("site/questionnaire".format())
-    except:
-        pass
-    open("site/questionnaire/index.html", "w").write(response.content.decode('utf-8'))
-
-    response = requests.get('http://localhost:85/add/new'.format())
-    try:
-        os.makedirs("site/add/new".format())
-    except:
-        pass
-    open("site/add/new/index.html", "w").write(response.content.decode('utf-8'))
-
-    response = requests.get('http://localhost:85/view'.format())
-    try:
-        os.makedirs("site/view".format())
-    except:
-        pass
-    open("site/view/index.html", "w").write(response.content.decode('utf-8'))
-    print("Site regen done")
 
     cur = conn.cursor()
     categories = cur.execute("""
@@ -1631,19 +1612,9 @@ if __name__ == "__main__":
 
     for question in questions:
         question_id = question[0]
-        response = requests.get('http://localhost:85/add/{}'.format(question_id))
-        try:
-            os.makedirs("site/add/{}".format(question_id))
-        except:
-            pass
-        open("site/add/{}/index.html".format(question_id), "w").write(response.content.decode('utf-8'))
+        save_url('http://localhost:85/add/{}'.format(question_id))
 
-        response = requests.get('http://localhost:85/questions/{}/new'.format(question_id))
-        try:
-            os.makedirs("site/questions/{}/new".format(question_id))
-        except:
-            pass
-        open("site/questions/{}/new/index.html".format(question_id), "w").write(response.content.decode('utf-8'))
+        save_url('http://localhost:85/questions/{}/new'.format(question_id))
 
         cur = conn.cursor()
         categories = cur.execute("""
@@ -1654,9 +1625,6 @@ if __name__ == "__main__":
 
         for answer in answers:
             answer_id = answer[0]
-            response = requests.get('http://localhost:85/questions/{}/{}'.format(question_id, answer_id))
-            try:
-                os.makedirs("site/questions/{}/{}".format(question_id, answer_id))
-            except:
-                pass
-            open("site/questions/{}/{}/index.html".format(question_id, answer_id), "w").write(response.content.decode('utf-8'))
+            save_url('http://localhost:85/questions/{}/{}'.format(question_id, answer_id))
+
+    print("Site regen done")
