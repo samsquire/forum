@@ -9,13 +9,28 @@ import redis
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 from threading import Thread
-from flask import Flask
+from flask import Flask, request
 import requests
 import pickle
+from opentracing.propagation import Format
 
 app = Flask(__name__)
 hostname = os.environ["WORKER_HOST"]
 
+from jaeger_client import Config
+
+
+config = Config(
+        config={ # usually read from some yaml config
+            'sampler': {
+                'type': 'const',
+                'param': 1,
+            },
+            'logging': True,
+        },
+        service_name='dls',
+        validate=True
+)
 
 groups = {}
 spans = {}
@@ -60,21 +75,34 @@ def register_span(group, span_name, requires, method):
     methods[span_name] = method
 
 class Worker(Thread):
-    def __init__(self, threads, span, method, resources, outputs):
+    def __init__(self, tracer, threads, span, method, resources, outputs, tracer_context):
         super(Worker, self).__init__()
+        self.tracer = tracer
         self.threads = threads
         self.span = span
         self.method = method
         self.resources = resources
         self.outputs = outputs
+        self.tracer_context = tracer_context
 
     def run(self):
         print(self.span["name"])
         for ancestor in self.span["ancestors"]:
             if ancestor in self.threads:
                 print("Assuming other process did the work already")
+                print(ancestor)
                 self.threads[ancestor].join()
-        self.method(self.resources, self.outputs)
+
+        span_context = self.tracer.extract(
+           format=Format.HTTP_HEADERS,
+           carrier=self.tracer_context
+        )
+        span = self.tracer.start_span(
+           operation_name=self.span["name"],
+           child_of=span_context)
+
+        with self.tracer.scope_manager.activate(span, True) as scope:
+           self.method(self.resources, self.outputs)
 
 def initialize_group(group):
     # topologically sort
@@ -117,8 +145,25 @@ def initialize_group(group):
         span["host"] = picked_host
     return spans
 
-def run_group(spans, host_name, group_name, start_task=None):
-    interops = []
+tracer = config.initialize_tracer()
+
+def run_group(spans, host_name, group_name, start_task=None, span_context=None):
+    unstarted_threads = []
+    if not span_context:
+        outbound_span = tracer.start_span(
+           operation_name=host_name
+       )
+    else:
+        span_context = tracer.extract(
+           format=Format.HTTP_HEADERS,
+           carrier=span_context
+        )
+        outbound_span = tracer.start_span(
+           operation_name=host_name,
+           child_of=span_context)
+
+
+    tasks = []
     # begin execution
     r = Resources()
 
@@ -134,41 +179,76 @@ def run_group(spans, host_name, group_name, start_task=None):
     running = False
     if start_task == None:
         running = True
-    for span in spans:
-        if start_task == span["name"]:
-            running = True
-        if not running:
-            continue
 
-        if (previous_host != "" and previous_host == span["host"]) or span["host"] == host_name:
-            print("Can run here")
+    with tracer.scope_manager.activate(outbound_span, True) as scope:
+        for span in spans:
+            span["task"] = "skip"
+            if start_task == span["name"]:
+                running = True
+            if not running:
+                continue
 
+            if span["host"] == host_name:
+                print("Can run here")
+
+                span_name = span["name"]
+                if span_name[0] == "@":
+                    continue # pseudo span
+                method = methods[span["name"]]
+
+                http_header_carrier = {}
+                tracer.inject(
+                    span_context=outbound_span,
+                    format=Format.HTTP_HEADERS,
+                    carrier=http_header_carrier)
+
+                threads[span_name] = Worker(tracer, threads, span, method, resources, outputs, http_header_carrier)
+                unstarted_threads.append(span_name)
+                span["task"] = "thread"
+
+            if span["host"] != host_name:
+                print("Need to interop")
+                span["task"] = "interop"
+            previous_host = span["host"]
+
+        pending_threads = []
+        for span in spans:
             span_name = span["name"]
-            if span_name[0] == "@":
-                continue # pseudo span
-            method = methods[span["name"]]
 
-            threads[span_name] = Worker(threads, span, method, resources, outputs)
-        else:
-            print("Need to interop")
-            interops.append(span)
-            break
-        previous_host = span["host"]
+            if span["task"] == "thread":
+                print("Starting thread {}".format(span_name))
+                threads[span_name].start()
+                unstarted_threads.remove(span_name)
+                pending_threads.append(span_name)
+            if span["task"] == "interop":
 
-    for thread_name, thread in threads.items():
-        print("Starting thread {}".format(thread_name))
-        thread.start()
-    for thread in threads.values():
-        thread.join()
-    previous_host = span["host"]
+                # wait for pending work before making request
+                for pending_thread in pending_threads:
+                    threads[pending_thread].join()
 
-    for interop in interops:
-        data = pickle.dumps(outputs)
-        response = requests.post("http://{}:{}/dispatch/{}/{}".format(hosts[span["host"]], ports[span["host"]], group_name, span["name"]), data=data)
-        new_outputs = pickle.loads(response.content)
-        print(new_outputs.__dict__.items())
-        for new_key, new_value in new_outputs.__dict__.items():
-            setattr(outputs, new_key, new_value)
+                headers = {}
+                interop_span = tracer.start_span(
+                   operation_name=span_name,
+                   child_of=span_context)
+                tracer.inject(
+                   span_context=outbound_span,
+                   format=Format.HTTP_HEADERS,
+                   carrier=headers)
+
+                with tracer.scope_manager.activate(interop_span, True) as scope:
+                    data = pickle.dumps(outputs)
+                    response = requests.post("http://{}:{}/dispatch/{}/{}".format(hosts[span["host"]],
+                        ports[span["host"]],
+                        group_name, span["name"]), data=data, headers=headers)
+                    new_outputs = pickle.loads(response.content)
+                    print(new_outputs.__dict__.items())
+                    for new_key, new_value in new_outputs.__dict__.items():
+                        setattr(outputs, new_key, new_value)
+                break
+
+        #for thread_name, thread in threads.items():
+        for thread in pending_threads:
+            threads[thread].join()
 
     return outputs
 
@@ -183,12 +263,12 @@ def connect_to_database(resources, host):
     print(resources.conn)
 
 def connect_to_redis(resources, host):
-    resources.r = r = redis.Redis(host=host, port=6379, db=0)
+    resources.r = redis.Redis(host=host, port=6379, db=0)
     print(resources.r)
 
 
 register_resource("communities database", connect_to_database)
-register_resource("redis cache", connect_to_database)
+register_resource("redis cache", connect_to_redis)
 
 register_host(name="app", port=9005, host="localhost", has=[])
 register_host(name="database", port=9006, host="localhost", has=["communities database", "redis cache"])
@@ -196,17 +276,23 @@ register_host(name="database", port=9006, host="localhost", has=["communities da
 def get_community(r, o):
     print("Getting community query from database")
     o.community = 6
+    time.sleep(5)
 
 def get_exact_posts(r, o):
     print("Getting exact posts from database")
     o.exact_posts = ["blah"]
+    time.sleep(5)
 
 def get_partial_posts(r, o):
     print("Getting partial posts from database")
     o.partial_posts = ["yes"]
+    time.sleep(5)
 
 def combine_work(r, o):
     o.combine = o.partial_posts + o.exact_posts
+
+def get_parent_communities(r, o):
+    o.parents = ["one"]
 
 register_span("get communities",
     "get community",
@@ -224,13 +310,18 @@ register_span("get communities",
     "app.combine work",
     ["app.get exact posts", "app.get partial posts"],
     combine_work)
+register_span("get communities",
+    "get parent communities",
+    ["@communities database",
+    "app.combine work"],
+    get_parent_communities)
 
 spans = initialize_group("get communities")
 
 @app.route("/dispatch/<group_name>/<start_task>", methods=["POST"])
 def run_task(group_name, start_task):
     print("Received interop request {} {}".format(group_name, start_task))
-    outputs = run_group(spans, hostname, group_name, start_task)
+    outputs = run_group(spans, hostname, group_name, start_task, span_context=request.headers)
     return pickle.dumps(outputs)
 
 if __name__ == "__main__":
@@ -240,5 +331,6 @@ if __name__ == "__main__":
     print(outputs.partial_posts)
     print(outputs.community)
     print(outputs.combine)
+    print(outputs.parents)
     t1 = time.time()
     print(t1-t0)
