@@ -1,3 +1,5 @@
 flask
 psycopg2
 pyyaml
+networkx
+ortools
