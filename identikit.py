@@ -20,6 +20,7 @@ import asyncio
 from threading import Thread
 from subprocess import Popen
 import random
+from concurrent.futures import ProcessPoolExecutor
 
 from jaeger_client import Config
 
