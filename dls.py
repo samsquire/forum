@@ -1,3 +1,4 @@
+import sys
 import os
 import time
 from pprint import pprint
@@ -13,6 +14,7 @@ from flask import Flask, request
 import requests
 import pickle
 from opentracing.propagation import Format
+import json
 
 app = Flask(__name__)
 hostname = os.environ["WORKER_HOST"]
@@ -44,7 +46,7 @@ ports = {}
 class Resources():
     pass
 
-class Outputs():
+class WorkOutput():
     pass
 
 
@@ -56,21 +58,20 @@ def register_host(name, host, port, has):
 
 def register_span(group, span_name, requires, method):
     if group not in groups:
-        print("New group, creating group")
         groups[group] = nx.DiGraph()
     G = groups[group]
     if span_name not in spans:
         G.add_node(span_name)
     for requirement in requires:
         if requirement[0] == "@":
-            print("{} depending on resource {}".format(span_name, requirement))
+            # print("{} depending on resource {}".format(span_name, requirement))
             resource_dependencies[span_name].append(requirement[1:])
         else:
             if requirement not in spans:
                 spans[requirement] = requirement
                 G.add_node(requirement)
             G.add_edge(requirement, span_name)
-            print("{} depending on requirement {}".format(span_name, requirement))
+            # print("{} depending on requirement {}".format(span_name, requirement))
 
     methods[span_name] = method
 
@@ -86,11 +87,9 @@ class Worker(Thread):
         self.tracer_context = tracer_context
 
     def run(self):
-        print(self.span["name"])
         for ancestor in self.span["ancestors"]:
             if ancestor in self.threads:
-                print("Assuming other process did the work already")
-                print(ancestor)
+                # print("Assuming other process did the work already")
                 self.threads[ancestor].join()
 
         span_context = self.tracer.extract(
@@ -115,7 +114,7 @@ def initialize_group(group):
         })
 
     spans, orderings = parallelise_components(component_data=component_data)
-    pprint(spans)
+    # pprint(spans)
     previous_picked_host = ""
     # allocate spans to hosts
     for span in spans:
@@ -124,13 +123,13 @@ def initialize_group(group):
         picked_host = ""
         for dependency in resource_dependencies[span_name]:
             print("Span '{}' would prefer to be on a host with fast access to '{}'".format(span_name, dependency))
-            print("Hosts that have fast access to {}: {}".format(dependency, has_index[dependency]))
+            print(" - Hosts that have fast access to {}: {}".format(dependency, has_index[dependency]))
             for host in has_index[dependency]:
                 picked_host = host
                 break
 
         preferred_host_components = span_name.split(".")
-        print(preferred_host_components)
+
         if len(preferred_host_components) == 2:
             preferred_host = preferred_host_components[0]
             picked_host = preferred_host
@@ -140,14 +139,15 @@ def initialize_group(group):
             # faster to pick the previous host
             picked_host = previous_picked_host
         previous_picked_host = picked_host
-        print(picked_host)
-        print("Assigning {} to host {} which is {}".format(span_name, picked_host, hosts[picked_host]))
+
+        print(" - Assigning {} to host {} which is at {}:{}".format(span_name, picked_host, hosts[picked_host], ports[picked_host]))
         span["host"] = picked_host
     return spans
 
 tracer = config.initialize_tracer()
+print("twice")
 
-def run_group(spans, host_name, group_name, start_task=None, span_context=None):
+def run_group(propagate, spans, host_name, group_name, start_task=None, span_context=None, originator=None):
     unstarted_threads = []
     if not span_context:
         outbound_span = tracer.start_span(
@@ -171,7 +171,7 @@ def run_group(spans, host_name, group_name, start_task=None, span_context=None):
         host = hosts[host_name]
         for resource_name, resource in resources.items():
             resource(r, host)
-    outputs = Outputs()
+    outputs = WorkOutput()
     threads = {}
 
     previous_host = ""
@@ -182,14 +182,16 @@ def run_group(spans, host_name, group_name, start_task=None, span_context=None):
 
     with tracer.scope_manager.activate(outbound_span, True) as scope:
         for span in spans:
+            span_name = span["name"]
             span["task"] = "skip"
             if start_task == span["name"]:
                 running = True
             if not running:
                 continue
 
+
             if span["host"] == host_name:
-                print("Can run here")
+                print("We can run {} on this host".format(span_name, host_name))
 
                 span_name = span["name"]
                 if span_name[0] == "@":
@@ -206,9 +208,14 @@ def run_group(spans, host_name, group_name, start_task=None, span_context=None):
                 unstarted_threads.append(span_name)
                 span["task"] = "thread"
 
-            if span["host"] != host_name:
+            if span["host"] == originator:
+                running = False
+                continue
+            elif span["host"] != host_name:
                 print("Need to interop")
-                span["task"] = "interop"
+                if previous_host != span["host"]:
+                    span["task"] = "interop"
+
             previous_host = span["host"]
 
         pending_threads = []
@@ -236,15 +243,23 @@ def run_group(spans, host_name, group_name, start_task=None, span_context=None):
                    carrier=headers)
 
                 with tracer.scope_manager.activate(interop_span, True) as scope:
-                    data = pickle.dumps(outputs)
-                    response = requests.post("http://{}:{}/dispatch/{}/{}".format(hosts[span["host"]],
+                    print("Interop to {}:{} for {}".format(hosts[span["host"]],
                         ports[span["host"]],
-                        group_name, span["name"]), data=data, headers=headers)
-                    new_outputs = pickle.loads(response.content)
-                    print(new_outputs.__dict__.items())
-                    for new_key, new_value in new_outputs.__dict__.items():
+                        span["name"]))
+                    data = json.dumps(outputs.__dict__)
+                    host_counter = 0
+
+                    response = requests.post("http://{}:{}/dispatch/{}/{}/{}".format(hosts[span["host"]],
+                       ports[span["host"]],
+                       group_name, span["name"], host_name), data=data, headers=headers)
+
+                    new_outputs = json.loads(response.text)
+                    for new_key, new_value in new_outputs.items():
                         setattr(outputs, new_key, new_value)
-                break
+                    print("Received interop from {}".format(span["name"]))
+                if not propagate:
+                    break
+
 
         #for thread_name, thread in threads.items():
         for thread in pending_threads:
@@ -276,39 +291,41 @@ register_host(name="database", port=9006, host="localhost", has=["communities da
 def get_community(r, o):
     print("Getting community query from database")
     o.community = 6
-    time.sleep(5)
+
 
 def get_exact_posts(r, o):
     print("Getting exact posts from database")
-    o.exact_posts = ["blah"]
-    time.sleep(5)
+    o.exact_posts = ["An exact post"]
+
 
 def get_partial_posts(r, o):
     print("Getting partial posts from database")
-    o.partial_posts = ["yes"]
-    time.sleep(5)
+    o.partial_posts = ["A partial search result"]
+
 
 def combine_work(r, o):
+    print("Combining work")
     o.combine = o.partial_posts + o.exact_posts
 
+
 def get_parent_communities(r, o):
-    o.parents = ["one"]
+    o.parent_posts = ["one"]
 
 register_span("get communities",
-    "get community",
-    ["@communities database"],
+    "app.get community",
+    [],
     get_community)
 register_span("get communities",
-    "app.get exact posts",
-    ["get community"],
+    "database.get exact posts",
+    ["app.get community", "@communities database"],
     get_exact_posts)
 register_span("get communities",
-    "app.get partial posts",
-    ["get community"],
+    "database.get partial posts",
+    ["app.get community", "@communities database"],
     get_partial_posts)
 register_span("get communities",
     "app.combine work",
-    ["app.get exact posts", "app.get partial posts"],
+    ["database.get exact posts", "database.get partial posts"],
     combine_work)
 register_span("get communities",
     "get parent communities",
@@ -318,19 +335,19 @@ register_span("get communities",
 
 spans = initialize_group("get communities")
 
-@app.route("/dispatch/<group_name>/<start_task>", methods=["POST"])
-def run_task(group_name, start_task):
+@app.route("/dispatch/<group_name>/<start_task>/<originator>", methods=["POST"])
+def run_task(group_name, start_task, originator):
     print("Received interop request {} {}".format(group_name, start_task))
-    outputs = run_group(spans, hostname, group_name, start_task, span_context=request.headers)
-    return pickle.dumps(outputs)
+    outputs = run_group(True, spans, hostname, group_name, start_task, span_context=request.headers, originator=originator)
+    return json.dumps(outputs.__dict__)
 
 if __name__ == "__main__":
     t0 = time.time()
-    outputs = run_group(spans, "client", "get communities")
+    outputs = run_group(False, spans, "client", "get communities")
     print(outputs.exact_posts)
     print(outputs.partial_posts)
     print(outputs.community)
     print(outputs.combine)
-    print(outputs.parents)
+    print(outputs.parent_posts)
     t1 = time.time()
     print(t1-t0)
