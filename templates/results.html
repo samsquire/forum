@@ -29,7 +29,7 @@
 
     <button style="display: inline">^</button>
     </form>
-    <a href="/articles/{{ post[2] }}">{{ post[0] }}</a><span style="color: #838383; font-size; 16pt">{{ post[1] }} {{ post[7] }}pts</span>
+    <a href="/articles/{{ post[2] }}">{{ post[0] }}</a><span style="color: #838383; font-size; 16pt">{{ post[1] }} {{ post[7] }}pts | {{ post[9] }} comments</span>
 </div>
 
 </div>
@@ -79,7 +79,7 @@ Type your message below. Your message will be delivered to the community in the 
 
 </form>
 
-<h1>Similar communities</h1>
+<h1 style="clear:both">Similar communities</h1>
 
 <ol>
 {% for similar_community in similar_communities %}

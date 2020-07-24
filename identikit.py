@@ -20,7 +20,7 @@ import asyncio
 from threading import Thread
 from subprocess import Popen
 import random
-from concurrent.futures import ProcessPoolExecutor
+
 
 from jaeger_client import Config
 
@@ -678,6 +678,9 @@ def get_or_create_community(identikit, community_id):
         community_link = "/communities/{}".format(cid)
         conn.commit()
         r.delete("all_communities")
+
+        regenerate_site()
+
     return community_link, cid
 
 def get_exact_posts(cid, community_id, sort="votes-desc"):
@@ -702,12 +705,14 @@ def get_exact_posts(cid, community_id, sort="votes-desc"):
         print("Getting exact posts by " + community_id)
         cur = conn.cursor()
         statement = """
-        select body, identikit_posts.name, identikit_posts.id, identikit_posts.reply_depth, identikit_community_posting.community,
-        identikit_posts.reply_to, identikit_community_posting.cid, identikit_posts.votes, identikit_posts.parent
-        from identikit_posts join identikit_community_posting on identikit_posts.id = identikit_community_posting.post where identikit_community_posting.community = %s
+        select identikit_posts.body, identikit_posts.name, identikit_posts.id, identikit_posts.reply_depth, identikit_community_posting.community,
+        identikit_posts.reply_to, identikit_community_posting.cid, identikit_posts.votes, identikit_posts.parent, post_comment_counts.count
+        from identikit_posts join identikit_community_posting on identikit_posts.id = identikit_community_posting.post
+        full outer join post_comment_counts on post_comment_counts.post = identikit_posts.id
+        where identikit_community_posting.community = %s
         order by {} {}
         """.format(real_sort_field, real_sort_order)
-
+        print(cur.mogrify(statement, (community_id,)).decode('utf-8'))
         cur.execute(statement, (community_id,))
         new_posts = list(cur.fetchmany(5000))
 
@@ -724,6 +729,10 @@ def get_exact_posts(cid, community_id, sort="votes-desc"):
         print("Fresh fetch")
         new_posts = reorder_posts_by_reply(new_posts + replies)
         c.save(new_posts)
+        for post in new_posts:
+            pid = post[2]
+            print("Depending on {}".format(pid))
+            c.add_dependency("posts_cache_{}".format(pid))
         redis_key = "community_posts_{}".format(cid)
         c.add_dependency(redis_key)
 
@@ -795,11 +804,13 @@ def get_posts(community_id, communities):
         return c.lookup()
     else:
         cur = conn.cursor()
-        cur.execute("""
+        statement = """
         select distinct on (identikit_posts.id) body, identikit_posts.name, identikit_posts.id, identikit_posts.reply_depth, identikit_community_posting.community,
         identikit_posts.reply_to, identikit_community_posting.cid, identikit_posts.votes
         from identikit_posts join identikit_community_posting on identikit_posts.id = identikit_community_posting.post where identikit_community_posting.community in %s
-        """, (tuple(communities),))
+        """
+        print(cur.mogrify(statement, (tuple(communities),)).decode('utf-8'))
+        cur.execute(statement, (tuple(communities),))
         new_posts = list(cur.fetchmany(5000))
         new_posts = reorder_posts_by_reply(new_posts)
         c.save(new_posts)
@@ -854,7 +865,7 @@ def load_comments_nosort(pid):
     sort = request.form.get("sort", "id-asc")
     return redirect("http://lonely-people.com/articles/{}/{}".format(pid, sort))
 
-@app.route("/articles/<pid>/<sort>", methods=["GET", "POST"])
+@app.route("/articles/<pid>/<sort>/", methods=["GET", "POST"])
 def load_comments(pid, sort):
     cur = conn.cursor()
     cur.execute("""
@@ -898,8 +909,31 @@ def receive_comment(pid, comment):
     """, (parent_post, reply_post[0]))
     post_replies_response = list(cur.fetchone())
 
+    cur = conn.cursor()
+    cur.execute("""
+    select count from post_comment_counts where post = %s
+    """, (pid,))
+    count_response = cur.fetchone()
+
+    if count_response == None:
+        cur = conn.cursor()
+        cur.execute("""
+        insert into post_comment_counts (post, count) values (%s, 1)
+        """, (pid,))
+
+    else:
+        count = count_response[0]
+        cur = conn.cursor()
+        cur.execute("""
+        update post_comment_counts set count = %s where post = %s
+        """, (count + 1, pid,))
     conn.commit()
+
+    c = Cache()
+    redis_key = "posts_cache_{}".format(pid)
+    c.invalidate_dependents(redis_key)
     regenerate_site()
+
 
     return redirect("http://lonely-people.com/articles/{}".format(pid))
 
@@ -1260,6 +1294,11 @@ def post_message():
     community_post_id = cur.fetchone()
     print("Saved exact post as", community_post_id)
 
+    cur = conn.cursor()
+    cur.execute("""
+    insert into post_comment_counts (post, count) values (%s, 0)
+    """, (post_id,))
+
     conn.commit()
     regenerate_site()
 
@@ -1513,12 +1552,17 @@ def drop_privileges(uid_name='nobody', gid_name='nogroup'):
 
 if __name__ == "__main__":
     import requests
+    gen_user = os.environ.get("GEN_USER", "sam")
+    print("Dropping rights to {}".format(gen_user))
+    drop_privileges(uid_name=gen_user)
+
     delete = Popen(["rm", "-rf", "site"])
     delete.communicate()
     delete.wait()
 
     def save_url(url, override_path=None):
         beginning, path = url.split("http://localhost:85/")
+        print(path)
         try:
             os.makedirs("site/{}".format(path))
         except:
@@ -1533,6 +1577,14 @@ if __name__ == "__main__":
             path = "site/" + override_path + "/index.html"
         open(path, "w").write(response.content.decode('utf-8'))
 
+    response = requests.get("http://localhost:85/static/jquery-3.5.1.min.js")
+    path = "site/static/"
+    try:
+        os.makedirs(path)
+    except:
+        pass
+    print("Saving {}".format(path))
+    open(path + "jquery-3.5.1.min.js", "w").write(response.content.decode('utf-8'))
 
     from argparse import ArgumentParser
     parser = ArgumentParser()
@@ -1540,9 +1592,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     requested_url = args.path
 
-    gen_user = os.environ.get("GEN_USER", "sam")
-    print("Dropping rights to {}".format(gen_user))
-    drop_privileges(uid_name=gen_user)
+
 
     cur = conn.cursor()
     categories = cur.execute("""
@@ -1555,7 +1605,7 @@ if __name__ == "__main__":
 
     for cid, identikit in communities:
         sort_options = get_sort_options()
-        url = 'http://localhost:85/communities/{}/id-asc'.format(cid)
+        url = 'http://localhost:85/communities/{}/id-asc/'.format(cid)
 
         save_url(url, override_path="communities/{}".format(cid))
 
@@ -1577,8 +1627,8 @@ if __name__ == "__main__":
 
     for post in posts:
         post_id = post[0]
-
-        save_url('http://localhost:85/articles/{}/id-asc'.format(post_id), override_path="articles/{}".format(post_id))
+        sort_options = get_sort_options()
+        save_url('http://localhost:85/articles/{}/id-asc/'.format(post_id), override_path="articles/{}".format(post_id))
 
         for sort_option in sort_options:
             response = requests.get('http://localhost:85/articles/{}/{}'.format(post_id, sort_option[0]))

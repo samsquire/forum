@@ -124,6 +124,11 @@ create table if not exists comment_replies (
     parent integer,
     post integer
 );
+create table if not exists post_comment_counts (
+    id serial primary key,
+    post integer,
+    count integer
+)
 """)
 
 # close communication with the PostgreSQL database server
