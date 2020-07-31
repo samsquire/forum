@@ -1,0 +1,13 @@
+{% extends "page.html" %}
+{% block content %}
+
+
+
+<form method="post" action="http://api.lonely-people.com/login">
+    <input type="text" name="username" placeholder="username"/>
+    <input type="text" name="password" placeholder="password"/>
+    <button type="submit">Login</button>
+
+</form>
+
+{% endblock %}

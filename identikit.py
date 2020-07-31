@@ -20,8 +20,8 @@ import asyncio
 from threading import Thread
 from subprocess import Popen
 import random
-
-
+from dls.dls_api import app, register_resource, register_host, register_span, initialize_group, configure_tracer, initialize_host, WorkOutput, resources
+import uuid
 from jaeger_client import Config
 
 
@@ -37,7 +37,7 @@ r = redis.Redis(host='localhost', port=6379, db=0)
 
 def regenerate_site():
     path = os.path.abspath("identikit.py")
-    regenerate = Popen(["python3", path], env={"admin_pass": "blah", "HOME": os.environ["HOME"], "USER": os.environ["USER"]})
+    regenerate = Popen(["python3.8", path], env={"admin_pass": "blah", "HOME": os.environ["HOME"], "USER": os.environ["USER"]})
     regenerate.communicate()
     regenerate.wait()
 
@@ -467,7 +467,7 @@ def get_parent_communities(data, exact_posts):
         without = list(filter(lambda x: x != community, communities))
         exact_communities.add(identikit_to_hash(" ".join(without)))
 
-    parent_community_posts = get_posts(":".join(exact_communities), exact_communities)
+    parent_community_posts = get_posts(data, exact_communities)
 
     exact_posts = exact_posts + parent_community_posts
 
@@ -942,11 +942,15 @@ class Timer():
         self.timers = []
         self.stack = []
 
+    def reset(self):
+        self.stack.clear()
+        self.timers.clear()
+
     def start(self):
         self.stack.append(time.time())
 
     def stop(self, reason):
-        duration = time.time() - self.stack.pop()
+        duration = (time.time() - self.stack.pop()) * 1000
         self.timers.append((duration, reason))
 
 config = Config(
@@ -961,154 +965,124 @@ config = Config(
         validate=True
     )
 # this call also sets opentracing.tracer
-tracer = config.initialize_tracer()
-
-class WorkOutput():
-    pass
-
-
-class GetParents(Thread):
-    def __init__(self, span, work_output):
-        super(GetParents, self).__init__()
-        self.span = span
-        self.work_output = work_output
-
-    def run(self):
-        with tracer.start_span('get parents', child_of=self.span) as span:
-            self.work_output.t.start()
-            if len(self.work_output.communities) > 1:
-                self.work_output.exact_posts = get_parent_communities(self.work_output.identikit, self.work_output.exact_posts)
-            self.work_output.t.stop("get parent communities posts")
-
-class GetC(Thread):
-    def __init__(self, span, work_output):
-        super(GetC, self).__init__()
-        self.span = span
-        self.work_output = work_output
-
-    def run(self):
-        with tracer.start_span('get community', child_of=self.span) as span:
-            cur = conn.cursor()
-            cur.execute("""
-            select community from user_communities where id = %s
-            """, (self.work_output.cid,))
-            community = cur.fetchone()
-            span.log_kv({"community": community})
-            self.work_output.t.stop("get community")
-            self.work_output.identikit = community[0]
-            self.work_output.community_id = identikit_to_hash(community[0])
-            self.work_output.communities = self.work_output.community_id.split(":")
-
-
-class GetE(Thread):
-    def __init__(self, span, work_output):
-        super(GetE, self).__init__()
-        self.span = span
-        self.work_output = work_output
-
-    def run(self):
-        with tracer.start_span('get exact posts', child_of=self.span) as span:
-            self.work_output.t.start()
-            self.work_output.exact_posts = get_exact_posts(self.work_output.cid, self.work_output.community_id, self.work_output.sort)
-            self.work_output.t.stop("get exact posts")
-
-
-class GetP(Thread):
-    def __init__(self, span, work_output):
-        super(GetP, self).__init__()
-        self.span = span
-        self.work_output = work_output
-
-    def run(self):
-        with tracer.start_span('get partials', child_of=self.span) as span:
-            self.work_output.t.start()
-            self.work_output.posts = get_posts(self.work_output.community_id, self.work_output.communities)
-            self.work_output.t.stop("get partials")
+configure_tracer(config)
 
 
 
-class GetSimilar(Thread):
-    def __init__(self, span, work_output):
-        super(GetSimilar, self).__init__()
-        self.span = span
-        self.work_output = work_output
+def get_parents(r, outputs):
 
-    def run(self):
-        with tracer.start_span('get similar', child_of=self.span) as span:
-            self.work_output.similar_communities = get_similar_communities(self.work_output.identikit)
+    if len(outputs.communities) > 1:
+        outputs.exact_posts = get_parent_communities(outputs.identikit, outputs.exact_posts)
 
-class GetOrCreate(Thread):
-    def __init__(self, span, work_output):
-        super(GetOrCreate, self).__init__()
-        self.span = span
-        self.work_output = work_output
 
-    def run(self):
-        with tracer.start_span('get or create', child_of=self.span) as span:
-            self.work_output.community_link, cid = get_or_create_community(self.work_output.identikit, self.work_output.community_id)
+def get_c(r, outputs):
+
+    conn = r.conn
+    cur = conn.cursor()
+    cur.execute("""
+    select community from user_communities where id = %s
+    """, (outputs.cid,))
+    community = cur.fetchone()
+
+    outputs.identikit = community[0]
+    outputs.community_id = identikit_to_hash(community[0])
+    outputs.communities = outputs.community_id.split(":")
+
+
+
+def get_e(r, outputs):
+
+    outputs.exact_posts = get_exact_posts(outputs.cid, outputs.community_id, outputs.sort)
+
+
+def get_p(r, outputs):
+
+    outputs.posts = get_posts(outputs.community_id, outputs.communities)
+
+
+def get_similar(r, outputs):
+
+    outputs.similar_communities = get_similar_communities(outputs.identikit)
+
+
+def get_or_create(r, outputs):
+
+    outputs.community_link, cid = get_or_create_community(outputs.identikit, outputs.community_id)
+
 
 @app.route("/communities/<cid>/", methods=["GET", "POST"])
 def get_community_nosort(cid):
     sort = request.form.get("sort", "id-asc")
     return redirect("http://lonely-people.com/communities/{}/{}".format(cid, sort))
 
+
+def create_timer(resources, host):
+    resources.t = Timer()
+
+def connect_to_database(resources, host):
+    resources.conn = psycopg2.connect("dbname='forum' user='forum' host='" + host + "' password='forum'")
+
+def connect_to_redis(resources, host):
+    resources.r = redis.Redis(host=host, port=6379, db=0)
+
+register_host(name="app", port=9006, host="localhost", has=["communities database", "redis cache"])
+
+register_resource("communities database", connect_to_database)
+register_resource("redis cache", connect_to_redis)
+register_resource("timer", create_timer)
+
+
+register_span("get communities",
+    "get exact posts",
+    ["get community", "@communities database"],
+    get_e)
+register_span("get communities",
+    "get partial posts",
+    ["get community", "@communities database"],
+    get_p)
+register_span("get communities",
+    "get parents",
+    ["get community", "get exact posts", "@communities database"],
+    get_parents)
+register_span("get communities",
+    "get or create",
+    ["get community", "@communities database"],
+    get_or_create)
+register_span("get communities",
+    "get_similar",
+    ["get community", "@communities database"],
+    get_similar)
+register_span("get communities",
+    "get community",
+    ["@communities database"],
+    get_c)
+
+context = initialize_group("get communities", "app")
+
+initialize_host(context)
+
 @app.route("/communities/<cid>/<sort>/", methods=["GET", "POST"])
 def get_community(cid, sort):
-    def work(cid):
-        work_output = WorkOutput()
-        work_output.cid = cid
+    work_output = WorkOutput()
+    signed_in, username, user_email, email_token, login_token = check_signed_in()
+    work_output.signed_in = signed_in
+    work_output.user_email = user_email
 
-        with tracer.start_span('communities') as span:
-            signed_in, username, user_email, email_token, login_token = check_signed_in()
-            work_output.signed_in = signed_in
-            work_output.user_email = user_email
+    work_output.cid = cid
+    work_output.sort = sort
 
-            t = Timer()
-            work_output.t = t
-            t.start()
-            t.start()
+    work_output, executed = context.run_group(work_output, None)
+    print("\n".join(work_output.diagram))
+    print(work_output.stats)
+    work_output.receiver_list = work_output.identikit.split(" ")
 
-            work_output.t = t
-            work_output.cid = cid
-            work_output.sort = sort
-
-            get_c = GetC(span, work_output)
-            get_c.start()
-            get_c.join()
-
-            get_e = GetE(span, work_output)
-            get_p = GetP(span, work_output)
-
-            get_e.start()
-            get_p.start()
-
-
-            get_e.join()
-            get_p.join()
-
-            get_parents = GetParents(span, work_output)
-            get_similar = GetSimilar(span, work_output)
-            get_or_create = GetOrCreate(span, work_output)
-
-            get_parents.start()
-            get_similar.start()
-            get_or_create.start()
-
-            get_parents.join()
-            get_similar.join()
-            get_or_create.join()
-
-            work_output.receiver_list = work_output.identikit.split(" ")
-
-            t.stop("whole thing")
-            return work_output
-
-    work_output = work(cid)
     sort_mode, sort_options = get_sort_mode(sort)
-    return render_template("results.html", sort_options=sort_options, cid=work_output.cid, community_link=work_output.community_link,
+    response = render_template("results.html", sort_options=sort_options, cid=work_output.cid, community_link=work_output.community_link,
     similar_communities=work_output.similar_communities, receiver_list=work_output.receiver_list, exact_posts=work_output.exact_posts,
     posts=work_output.posts, community_id=work_output.community_id, signed_in=work_output.signed_in, user_email=work_output.user_email,
-    community_lookup=work_output.identikit, timers=work_output.t.timers)
+    community_lookup=work_output.identikit, timers=context.r.t.timers)
+    # context.r.t.reset()
+    return response
 
 admin_pass = os.environ["admin_pass"].strip()
 
@@ -1158,8 +1132,8 @@ def delete_post(id):
     conn.commit()
     return redirect("/posts/{}".format(admin_pass))
 
-@app.route("/upvote/<id>/<cid>/<community>", methods=["POST"])
-def upvote_post(id, cid, community):
+@app.route("/upvote/<id>/<cid>", methods=["POST"])
+def upvote_post(id, cid):
 
     return_page = request.args.get("returnpage")
 
@@ -1173,6 +1147,7 @@ def upvote_post(id, cid, community):
 
     c = Cache()
     c.invalidate_dependents("community_posts_{}".format(cid))
+    c.invalidate_dependents("posts_{}".format(cid))
 
     r.delete("posts_{}".format(cid))
     print(voter_record)
@@ -1253,6 +1228,12 @@ def post_message():
     c = Cache()
     for community_hash in community_id.split(":"):
         c.invalidate_dependents(community_hash)
+
+    redis_key = "posts_" + identikit
+    c = Cache(redis_key)
+    c.invalidate_dependents(redis_key)
+
+    r.delete(redis_key)
 
     redis_key = "community_posts_" + cid
     c.invalidate_dependents(redis_key)
@@ -1529,6 +1510,119 @@ def questionnaire_to_community():
     regenerate_site()
     return redirect("http://lonely-people.com/communities/{}".format(cid))
 
+@app.route("/login", methods=["GET"])
+def login():
+    return render_template("login.html")
+
+def validate_session(session_id, user_id):
+    static = os.environ.get("STATIC_MODE", "dynamic") == "static"
+    if static:
+        session_user = request.headers["Override-User"]
+        if session_user != user_id:
+            return redirect("http://lonely-people.com/login"), None
+    else:
+        print("Validating user's request")
+        session_ip = r.get(session_id)
+        if session_ip == None:
+            # user has timed out or logged out already
+            return redirect("http://lonely-people.com/login"), None
+        session_ip = session_ip.decode('utf-8')
+        session_user = r.get(session_id + "_user_id")
+        if session_user == None:
+            return redirect("http://lonely-people.com/login"), None
+        session_user = session_user.decode('utf-8')
+        if request.headers["X-Forwarded-For"] != session_ip or session_user != user_id:
+            return redirect("http://lonely-people.com/login"), None
+
+    return None, session_user
+
+
+@app.route("/private/<session_id>/<user_id>/dashboard", methods=["GET"])
+def dashboard(session_id, user_id):
+
+    error, session_user = validate_session(session_id, user_id)
+    if error:
+        return error
+
+    print(session_user)
+
+    return render_template("dashboard.html", user_id=session_user)
+
+@app.route("/csrf", methods=["POST"])
+def csrf():
+    if "csrf_token" in session:
+        csrf_token = session["csrf_token"]
+    else:
+        csrf_token = uuid.uuid4().hex
+        session["csrf_token"] = csrf_token
+    return csrf_token
+
+@app.route("/login", methods=["POST"])
+def login_request():
+    if request.form["_csrf_token"] != session["csrf_token"]:
+        print("Invalid csrf token")
+        return redirect("http://lonely-people.com/login")
+    elif request.form["_csrf_token"] == session["csrf_token"]:
+        print("Generating new csrf token for user")
+        csrf_token = uuid.uuid4().hex
+        session["csrf_token"] = csrf_token
+
+    if request.form["username"] == "hello" and request.form["password"] == "world":
+        session_id = uuid.uuid4().hex
+        user_id = "1"
+        r.set(session_id, request.headers["X-Forwarded-For"])
+        user_key = "{}_{}".format(session_id, "user_id")
+        r.set(user_key, user_id)
+        r.expire(session_id, 3600)
+        r.expire(user_key, 3600)
+        os.symlink(os.path.abspath("privatesite/".format()), os.path.abspath("site/private/{}".format(session_id)))
+        return redirect("http://lonely-people.com/private/{}/{}/dashboard".format(session_id, user_id))
+    else:
+        return redirect("http://lonely-people.com/login")
+
+@app.route("/private/<session_id>/<user_id>/logout", methods=["POST"])
+def logout(session_id, user_id):
+    error, session_user = validate_session(session_id, user_id)
+    print(error)
+    if error:
+        return error
+    print("Logging out user")
+    r.delete(session_id)
+    r.delete(session_id + "_user_id")
+
+    return redirect("http://lonely-people.com/logout")
+
+@app.route("/logout", methods=["GET"])
+def logged_out():
+    return render_template("logout.html")
+
+@app.route("/auth", methods=["GET"])
+def authorise_request():
+    # headers_file = open("headers", "w")
+    # headers_file.write(str(request.headers))
+    request_uri = request.headers["X-Original-Uri"]
+    components = request_uri.split("/")
+    session_id = components[2]
+    session_id = str(session_id)
+    user_id = components[3]
+    # headers_file.write(session_id + "\n")
+
+    if r.exists(session_id):
+        fetched_session_id = r.get(session_id).decode('utf-8')
+        fetched_user_id = r.get(session_id + "_user_id").decode('utf-8')
+        if request.headers["X-Request-Address"] == fetched_session_id and fetched_user_id == user_id:
+            # headers_file.write("\nRequest address matches session")
+            status_code = 200
+        else:
+            # headers_file.write(request.headers["X-Request-Address"] + "\n")
+            # headers_file.write(fetched_session_id + "\n")
+            # headers_file.write("\nRequest address does not match session")
+            status_code = 401
+    else:
+        status_code = 401
+    # headers_file.close()
+    return make_response("", status_code)
+
 import os, pwd, grp
 
 def drop_privileges(uid_name='nobody', gid_name='nogroup'):
@@ -1556,9 +1650,14 @@ if __name__ == "__main__":
     print("Dropping rights to {}".format(gen_user))
     drop_privileges(uid_name=gen_user)
 
-    delete = Popen(["rm", "-rf", "site"])
+    for folder in ["communities", "articles", "questionnaire", "questions", "top", "view"]:
+        delete = Popen(["rm", "-rf", "site/{}".format(folder)])
+        delete.communicate()
+        delete.wait()
+    delete = Popen(["rm", "-rf", "privatesite"])
     delete.communicate()
     delete.wait()
+    print(delete.returncode)
 
     def save_url(url, override_path=None):
         beginning, path = url.split("http://localhost:85/")
@@ -1586,6 +1685,16 @@ if __name__ == "__main__":
     print("Saving {}".format(path))
     open(path + "jquery-3.5.1.min.js", "w").write(response.content.decode('utf-8'))
 
+    response = requests.get("http://localhost:85/static/csrf.js")
+    path = "site/static/"
+    try:
+        os.makedirs(path)
+    except:
+        pass
+    print("Saving {}".format(path))
+    open(path + "csrf.js", "w").write(response.content.decode('utf-8'))
+
+
     from argparse import ArgumentParser
     parser = ArgumentParser()
     parser.add_argument("--path")
@@ -1601,6 +1710,10 @@ if __name__ == "__main__":
     conn.commit()
     communities = cur.fetchmany(5000)
 
+    try:
+        os.makedirs("site/private".format())
+    except:
+        pass
 
 
     for cid, identikit in communities:
@@ -1651,6 +1764,8 @@ if __name__ == "__main__":
     save_url('http://localhost:85/add/new'.format())
 
     save_url('http://localhost:85/view'.format())
+    save_url('http://localhost:85/login'.format())
+    save_url('http://localhost:85/logout'.format())
 
 
 
@@ -1677,5 +1792,16 @@ if __name__ == "__main__":
         for answer in answers:
             answer_id = answer[0]
             save_url('http://localhost:85/questions/{}/{}'.format(question_id, answer_id))
+
+    page = "dashboard"
+    for user_id in ["1"]:
+        response = requests.get("http://localhost:84/private/0/{}/{}".format(user_id, page), headers={
+            "Override-User": user_id
+        })
+        try:
+            os.makedirs("privatesite/{}/{}".format(user_id, page))
+        except:
+            pass
+        open("privatesite/{}/{}/index.html".format(user_id, page), "w").write(response.text)
 
     print("Site regen done")
