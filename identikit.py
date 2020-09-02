@@ -1,6 +1,6 @@
 from flask import Flask
 from flask import Response, render_template, redirect, request, make_response, jsonify, session
-import psycopg2
+import psycopg2 # type: ignore
 import os, smtplib, ssl, time
 import yaml
 import random
@@ -20,9 +20,9 @@ import asyncio
 from threading import Thread
 from subprocess import Popen
 import random
-from dls.dls_api import app, register_resource, register_host, register_span, initialize_group, configure_tracer, initialize_host, WorkOutput, resources
+from dls.dls_api import app, register_resource, register_host, register_span, initialize_group, configure_tracer, initialize_host, WorkOutput, resources # type: ignore
 import uuid
-from jaeger_client import Config
+from jaeger_client import Config # type: ignore
 
 
 try:
@@ -56,8 +56,8 @@ def check_signed_in(from_cookie=False):
     signed_in = False
     user_email = None
     if login and email:
-        # email = re.sub('[^0-9a-zA-Z]+', '', email)
-        # login = re.sub('[^0-9a-zA-Z]+', '', login)
+        email = re.sub('[^0-9a-zA-Z]+', '', email)
+        login = re.sub('[^0-9a-zA-Z]+', '', login)
         token_path = "/home/{}/secrets/tokens/{}/{}".format(os.environ["USER"], email, login)
         if os.path.isfile(token_path):
             signed_in = True
@@ -66,7 +66,6 @@ def check_signed_in(from_cookie=False):
     return signed_in, username, user_email, email, login
 
 from jaeger_client import Config
-from flask_opentracing import FlaskTracer
 
 app = Flask(__name__)
 app.jinja_env.cache = {}
@@ -617,6 +616,7 @@ def submit_reply(id, cid, community):
     print("Saved post as", reply_post[0])
 
     conn.commit()
+    regenerate_site()
 
     return redirect("http://lonely-people.com/communities/{}".format(cid))
 
@@ -683,7 +683,7 @@ def get_or_create_community(identikit, community_id):
 
     return community_link, cid
 
-def get_exact_posts(cid, community_id, sort="votes-desc"):
+def get_exact_posts(cid: str, community_id:str, sort="votes-desc"):
     redis_key = "community_posts_{}_{}".format(cid, sort)
 
     c = Cache(redis_key)
@@ -716,18 +716,8 @@ def get_exact_posts(cid, community_id, sort="votes-desc"):
         cur.execute(statement, (community_id,))
         new_posts = list(cur.fetchmany(5000))
 
-        replies = []
-        if new_posts:
-            cur.execute("""
-            select distinct on (identikit_posts.id) identikit_posts.body, identikit_posts.name, identikit_posts.id, identikit_posts.reply_depth, identikit_community_posting.community,
-            identikit_posts.reply_to, identikit_community_posting.cid, identikit_posts.votes
-            from identikit_posts join post_replies on identikit_posts.id = post_replies.post join identikit_community_posting on identikit_posts.id = identikit_community_posting.post
-            where post_replies.parent in %s
-            """, (tuple(map(lambda x: x[2], new_posts)),))
-            replies = list(cur.fetchmany(5000))
-
         print("Fresh fetch")
-        new_posts = reorder_posts_by_reply(new_posts + replies)
+        new_posts = reorder_posts_by_reply(new_posts)
         c.save(new_posts)
         for post in new_posts:
             pid = post[2]
@@ -841,22 +831,14 @@ def get_comments(post_id, sort):
     cur.execute("""
     select body, post_comments.name, post_comments.id, post_comments.reply_depth,
     post_comments.reply_to, post_comments.votes
-    from post_comments where post_comments.post = %s and post_comments.parent is NULL
+    from post_comments where post_comments.post = %s
     order by {} {}
     """.format(real_sort_field, real_sort_order), (post_id,))
     new_comments = list(cur.fetchmany(5000))
 
-    replies = []
-    if new_comments:
-        cur.execute("""
-        select distinct on (post_comments.id) post_comments.body, post_comments.name, post_comments.id, post_comments.reply_depth,
-        post_comments.reply_to, post_comments.votes
-        from post_comments join comment_replies on post_comments.id = comment_replies.post
-        where comment_replies.parent in %s
-        """, (tuple(map(lambda x: x[2], new_comments)),))
-        replies = list(cur.fetchmany(5000))
+    print(new_comments)
 
-    new_posts = reorder_posts_by_reply(new_comments + replies)
+    new_posts = reorder_posts_by_reply(new_comments)
 
     return new_posts
 
@@ -1298,7 +1280,6 @@ class Answer():
         self.text = text
         self.short = text.replace(" ", "_")
 
-questions = [Question(1, "PoliticalSide", "What political side are you on?", [Answer(1, "Left wing"), Answer(2, "Right wing"), Answer(3, "Centrist"), Answer(4, "Neither")])]
 
 def get_questions():
     cur = conn.cursor()
@@ -1478,9 +1459,10 @@ def delete_answer(qid, id):
     cur = conn.cursor()
     categories = cur.execute("""
     delete from answers where id = %s
-    """, (id))
+    """, (id,))
     conn.commit()
-    return redirect("/add/" + qid)
+    regenerate_site()
+    return redirect("http://lonely-people.com/add/" + qid)
 
 @app.route("/questionnaire", methods=["POST"])
 def questionnaire_to_community():
@@ -1545,8 +1527,22 @@ def dashboard(session_id, user_id):
         return error
 
     print(session_user)
+    # Generate page as user
 
     return render_template("dashboard.html", user_id=session_user)
+
+@app.route("/private/<session_id>/<user_id>/profile", methods=["GET"])
+def profile(session_id, user_id):
+
+    error, session_user = validate_session(session_id, user_id)
+    if error:
+        return error
+
+    print(session_user)
+    # Generate page as user
+
+    return render_template("profile.html", user_id=session_user)
+
 
 @app.route("/csrf", methods=["POST"])
 def csrf():
@@ -1659,7 +1655,7 @@ if __name__ == "__main__":
     delete.wait()
     print(delete.returncode)
 
-    def save_url(url, override_path=None):
+    def save_url(url: str, override_path:str=None):
         beginning, path = url.split("http://localhost:85/")
         print(path)
         try:
@@ -1768,6 +1764,15 @@ if __name__ == "__main__":
     save_url('http://localhost:85/logout'.format())
 
 
+    cur = conn.cursor()
+    categories = cur.execute("""
+    select post, id from post_comments
+    """, ())
+    conn.commit()
+    comments = cur.fetchmany(5000)
+    for comment in comments:
+        save_url('http://localhost:85/reply/{}/{}'.format(comment[0], comment[1]))
+
 
     cur = conn.cursor()
     categories = cur.execute("""
@@ -1803,5 +1808,17 @@ if __name__ == "__main__":
         except:
             pass
         open("privatesite/{}/{}/index.html".format(user_id, page), "w").write(response.text)
+
+    page = "profile"
+    for user_id in ["1"]:
+        response = requests.get("http://localhost:84/private/0/{}/{}".format(user_id, page), headers={
+            "Override-User": user_id
+        })
+        try:
+            os.makedirs("privatesite/{}/{}".format(user_id, page))
+        except:
+            pass
+        open("privatesite/{}/{}/index.html".format(user_id, page), "w").write(response.text)
+
 
     print("Site regen done")

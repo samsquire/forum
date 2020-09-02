@@ -1,10 +1,11 @@
 {% extends "page.html" %}
 {% block content %}
 
-Protected page {{ user_id }}
+Another protected page {{ user_id }}
 
-<a href="http://api.lonely-people.com/private/SESSION/USER/profile">Go to my profile</a>
+<a href="http://api.lonely-people.com/private/SESSION/USER/dashboard">Go to my dashboard</a>
 
 <form method="post" action="http://api.lonely-people.com/private/SESSION/USER/logout"><button>Logout</button></form>
+
 
 {% endblock %}

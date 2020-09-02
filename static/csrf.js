@@ -22,3 +22,18 @@ get_token().then(function (data) {
         form.insertAdjacentElement("afterbegin", hidden);
     }
 })
+
+
+var session_id = String(document.location).split("/")[4]
+console.log(session_id);
+var user_id = String(document.location).split("/")[5]
+console.log(user_id);
+for (var form of document.forms) {
+    form.action = form.action.replace("SESSION", session_id);
+    form.action = form.action.replace("USER", user_id);
+}
+
+for (var element of document.querySelectorAll("a")) {
+    element.href = element.href.replace("SESSION", session_id);
+    element.href = element.href.replace("USER", user_id);
+};
